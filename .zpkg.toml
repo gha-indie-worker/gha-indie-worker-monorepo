@@ -1,0 +1,4 @@
+name = "gha-indie-worker-monorepo"
+kind = "monorepo"
+version = "0.1.0"
+

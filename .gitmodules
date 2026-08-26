@@ -1,0 +1,47 @@
+[submodule "apps/gha-indie-worker-api-server.rs"]
+	path = apps/gha-indie-worker-api-server.rs
+	url = https://github.com/gha-indie-worker/gha-indie-worker-api-server.rs.git
+
+[submodule "apps/gha-indie-worker-web-server.rs"]
+	path = apps/gha-indie-worker-web-server.rs
+	url = https://github.com/gha-indie-worker/gha-indie-worker-web-server.rs.git
+
+[submodule "apps/gha-indie-worker-infra"]
+	path = apps/gha-indie-worker-infra
+	url = https://github.com/gha-indie-worker/gha-indie-worker-infra.git
+
+[submodule "apps/gha-indie-worker-lib-core"]
+	path = apps/gha-indie-worker-lib-core
+	url = https://github.com/gha-indie-worker/gha-indie-worker-lib-core.git
+
+[submodule "apps/gha-indie-worker-interfaces"]
+	path = apps/gha-indie-worker-interfaces
+	url = https://github.com/gha-indie-worker/gha-indie-worker-interfaces.git
+
+[submodule "apps/gha-indie-worker-clients"]
+	path = apps/gha-indie-worker-clients
+	url = https://github.com/gha-indie-worker/gha-indie-worker-clients.git
+
+[submodule "apps/gha-indie-worker-cli"]
+	path = apps/gha-indie-worker-cli
+	url = https://github.com/gha-indie-worker/gha-indie-worker-cli.git
+
+[submodule "apps/gha-indie-worker-sync"]
+	path = apps/gha-indie-worker-sync
+	url = https://github.com/gha-indie-worker/gha-indie-worker-sync.git
+
+[submodule "apps/gha-indie-worker-e2e"]
+	path = apps/gha-indie-worker-e2e
+	url = https://github.com/gha-indie-worker/gha-indie-worker-e2e.git
+
+[submodule "apps/gha-indie-worker-flutter"]
+	path = apps/gha-indie-worker-flutter
+	url = https://github.com/gha-indie-worker/gha-indie-worker-flutter.git
+
+[submodule "apps/gha-indie-worker-desktop-app.rs"]
+	path = apps/gha-indie-worker-desktop-app.rs
+	url = https://github.com/gha-indie-worker/gha-indie-worker-desktop-app.rs.git
+
+[submodule "apps/gha-indie-worker-sidecar.rs"]
+	path = apps/gha-indie-worker-sidecar.rs
+	url = https://github.com/gha-indie-worker/gha-indie-worker-sidecar.rs.git
