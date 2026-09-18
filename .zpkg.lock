@@ -1,7 +1,7 @@
 version = 1
 
 [[git-submodule]]
-commit = "6020cc0a9ff7550e885749c5f9fa789d7e35adf4"
+commit = "dd97fe8a7d84895325572365f1c542f57cdc4138"
 format = "tar.gz"
 name = "apps/gha-indie-worker-api-server.rs"
 package = "gha-indie-worker/gha-indie-worker-api-server"
@@ -12,7 +12,7 @@ url = "https://github.com/gha-indie-worker/gha-indie-worker-api-server.rs.git"
 version = "0.1.0"
 
 [[git-submodule]]
-commit = "d45b8e24ae41cf38fb699f6af85b58d60ef17f5a"
+commit = "1f73385df1d9048ddb5e92fdb643c37d86c39aa0"
 format = "tar.gz"
 name = "apps/gha-indie-worker-web-server.rs"
 package = "gha-indie-worker/gha-indie-worker-web-server"
