@@ -1,23 +1,23 @@
 version = 1
 
 [[git-submodule]]
-commit = "4ea76b16c30e6702b4c9d4309779b5500765df1b"
+commit = "b71f0d12c4bb0dfbbe42f49b43a629f031d886b0"
 format = "tar.gz"
 name = "apps/gha-indie-worker-api-server.rs"
 package = "gha-indie-worker/gha-indie-worker-api-server"
 path = "apps/gha-indie-worker-api-server.rs"
-sha256 = "b40972fe93bef27f18e9b106d516659f8b04861c4fd783de2d1fb2c9b7382210"
-size = 11971
+sha256 = "317b179d3a0bc702dd42c98ac25c2a6d0f783c598aaee908475fe793eedc18ee"
+size = 13164
 url = "https://github.com/gha-indie-worker/gha-indie-worker-api-server.rs.git"
 version = "0.1.0"
 
 [[git-submodule]]
-commit = "60b2db594813a66405842df9383e2fee9f9fe98a"
+commit = "4f275d8664033b8ae5a249dac7131452398f6d24"
 format = "tar.gz"
 name = "apps/gha-indie-worker-web-server.rs"
 package = "gha-indie-worker/gha-indie-worker-web-server"
 path = "apps/gha-indie-worker-web-server.rs"
-sha256 = "bb6a573ca8f1dd2d5b5fca61a1354e5ea5312f344690826b2da575cb035a9f9f"
-size = 11468
+sha256 = "dce1cb944eca3b25eb466eebec153c0f7e9a96caa7b3200aaa3901ede902059f"
+size = 12537
 url = "https://github.com/gha-indie-worker/gha-indie-worker-web-server.rs.git"
 version = "0.1.0"
