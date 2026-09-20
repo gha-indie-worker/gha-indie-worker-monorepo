@@ -32,11 +32,13 @@ fi
 ORES_ROOT="$ROOT/.ores"
 WORK_ROOT="$ORES_ROOT/ci-worker-source"
 K8S_ROOT="$WORK_ROOT/k8s-cluster"
+LIBS_ROOT="$K8S_ROOT/remote/libs"
 WORKER_ROOT="$K8S_ROOT/remote/deployments/build-server-rs"
 TARGET_ROOT="$ORES_ROOT/ci-worker-target"
 CARGO_HOME_CLEAN="$ORES_ROOT/cargo-home"
 RECEIPT="$TARGET_ROOT/provenance.receipt"
 K8S_ORIGIN="https://github.com/ORESoftware/k8s-cluster.git"
+LIBS_ORIGIN="https://github.com/ORESoftware/k8s-libs-and-shared-defs.git"
 WORKER_ORIGIN="https://github.com/gha-indie-worker/gha-indie-worker.rs.git"
 
 fail() {
@@ -96,6 +98,25 @@ git_clean() {
     "$@"
 }
 
+clone_exact_https() {
+  local origin="$1"
+  local oid="$2"
+  local dest="$3"
+  local label="$4"
+
+  is_oid "$oid" || fail "$label gitlink is not a full lowercase Git OID"
+  rm -rf "$dest"
+  git_clean clone --filter=blob:none --no-checkout "$origin" "$dest"
+  git_clean -C "$dest" fetch --depth=1 origin "$oid"
+  git_clean -C "$dest" checkout --detach --force "$oid"
+
+  local actual_oid actual_origin
+  actual_oid="$(git_clean -C "$dest" rev-parse HEAD)"
+  actual_origin="$(git_clean -C "$dest" remote get-url origin)"
+  [[ "$actual_oid" == "$oid" ]] || fail "$label checkout drifted"
+  [[ "$actual_origin" == "$origin" ]] || fail "$label origin is not the reviewed HTTPS repository"
+}
+
 if [[ -L "$K8S_ROOT" || -L "$K8S_ROOT/.git" ]]; then
   fail "cached provenance checkout must not be symlinked"
 fi
@@ -120,24 +141,27 @@ git_clean -C "$K8S_ROOT" clean -ffdqx
 actual_provenance_sha="$(git_clean -C "$K8S_ROOT" rev-parse HEAD)"
 [[ "$actual_provenance_sha" == "$PROVENANCE_COMMIT" ]] || fail "provenance checkout drifted"
 
-# The split worker is the only subtree replaced. Sibling `remote/libs/*` stay
-# byte-for-byte from SOURCE_PROVENANCE.md's immutable k8s-cluster commit so the
-# split repository retains its original path-dependency build context.
-rm -rf "$WORKER_ROOT"
-git_clean clone --filter=blob:none --no-checkout "$WORKER_ORIGIN" "$WORKER_ROOT"
-git_clean -C "$WORKER_ROOT" fetch --depth=1 origin "$WORKER_SHA"
-git_clean -C "$WORKER_ROOT" checkout --detach --force "$WORKER_SHA"
-actual_worker_sha="$(git_clean -C "$WORKER_ROOT" rev-parse HEAD)"
-[[ "$actual_worker_sha" == "$WORKER_SHA" ]] || fail "worker checkout drifted"
-actual_worker_origin="$(git_clean -C "$WORKER_ROOT" remote get-url origin)"
-[[ "$actual_worker_origin" == "$WORKER_ORIGIN" ]] || fail "worker origin is not the reviewed repository"
+# `remote/libs` is a gitlink in k8s-cluster. Do not use recursive submodules:
+# the recorded .gitmodules URL is SSH and recursive initialization would expand
+# unrelated provenance. Read the exact gitlink OID from the immutable tree and
+# materialize only this worker dependency root from its reviewed HTTPS origin.
+libs_tree="$(git_clean -C "$K8S_ROOT" ls-tree "$PROVENANCE_COMMIT" -- remote/libs)"
+read -r libs_mode libs_type libs_sha libs_path <<<"$libs_tree"
+[[ "$libs_mode" == "160000" && "$libs_type" == "commit" && "$libs_path" == "remote/libs" ]] || \
+  fail "provenance remote/libs entry is not the expected gitlink"
+clone_exact_https "$LIBS_ORIGIN" "$libs_sha" "$LIBS_ROOT" "provenance libs"
+
+# The split worker is the only deployment subtree replaced. Its sibling path
+# dependencies come from the exact `remote/libs` gitlink recorded by the same
+# immutable k8s-cluster provenance commit.
+clone_exact_https "$WORKER_ORIGIN" "$WORKER_SHA" "$WORKER_ROOT" "worker"
 
 grep -Fq "$PROVENANCE_COMMIT" "$WORKER_ROOT/SOURCE_PROVENANCE.md" || \
   fail "worker provenance does not bind the requested k8s-cluster commit"
 
-test -f "$K8S_ROOT/remote/libs/telemetry-rs/Cargo.toml" || fail "telemetry-rs provenance dependency missing"
-test -f "$K8S_ROOT/remote/libs/runtime-config-client-rs/Cargo.toml" || fail "runtime-config-client-rs provenance dependency missing"
-test -f "$K8S_ROOT/remote/libs/nats/subject-defs/generated/rust/Cargo.toml" || fail "NATS subject provenance dependency missing"
+test -f "$LIBS_ROOT/telemetry-rs/Cargo.toml" || fail "telemetry-rs provenance dependency missing"
+test -f "$LIBS_ROOT/runtime-config-client-rs/Cargo.toml" || fail "runtime-config-client-rs provenance dependency missing"
+test -f "$LIBS_ROOT/nats/subject-defs/generated/rust/Cargo.toml" || fail "NATS subject provenance dependency missing"
 
 "${CLEAN_ENV[@]}" \
   CARGO_TARGET_DIR="$TARGET_ROOT" \
