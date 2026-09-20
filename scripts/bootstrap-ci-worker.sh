@@ -8,6 +8,7 @@ script_dir="${script_path%/*}"
 ROOT="$(cd "$script_dir/.." && pwd -P)"
 PROVENANCE_COMMIT="${INDIEBUILD_PROVENANCE_COMMIT:-5cfac43c6900898f36f588d044ca34083da1c726}"
 WORKER_SHA="${INDIEBUILD_WORKER_SHA:?INDIEBUILD_WORKER_SHA is required}"
+LIBS_SOURCE_DIR="${INDIEBUILD_LIBS_SOURCE_DIR:-}"
 CLEAN_HOME="${HOME:?HOME is required}"
 CLEAN_PATH="${PATH:?PATH is required}"
 CLEAN_RUSTUP_HOME="${RUSTUP_HOME:-}"
@@ -15,7 +16,7 @@ CLEAN_RUSTUP_HOME="${RUSTUP_HOME:-}"
 # This script runs as the ci-worker *build* command. ores-compose deliberately
 # admits the service environment before every phase, so scrub the current shell
 # before invoking even trusted helper binaries. The build needs only filesystem,
-# public HTTPS, Cargo/Rust and the two immutable revisions captured above.
+# public HTTPS, Cargo/Rust and immutable source coordinates captured above.
 for exported_name in $(compgen -e); do
   case "$exported_name" in
     HOME|PATH|RUSTUP_HOME) ;;
@@ -64,6 +65,18 @@ require_real_directory_or_absent() {
 if ! is_oid "$PROVENANCE_COMMIT" || ! is_oid "$WORKER_SHA"; then
   fail "provenance and worker revisions must be full lowercase 40-character Git OIDs"
 fi
+case "$LIBS_SOURCE_DIR" in
+  /*) ;;
+  "") fail "INDIEBUILD_LIBS_SOURCE_DIR is required for the private provenance gitlink" ;;
+  *) fail "INDIEBUILD_LIBS_SOURCE_DIR must be an absolute operator-owned checkout path" ;;
+esac
+[[ ! -L "$LIBS_SOURCE_DIR" ]] || fail "private provenance source must not be a symlink"
+[[ -d "$LIBS_SOURCE_DIR/.git" && ! -L "$LIBS_SOURCE_DIR/.git" ]] || \
+  fail "private provenance source must be a normal Git checkout"
+canonical_libs_source="$(cd "$LIBS_SOURCE_DIR" && pwd -P)"
+case "$canonical_libs_source" in
+  "$ROOT"|"$ROOT"/*) fail "private provenance source must live outside the materialized monorepo" ;;
+esac
 
 require_real_directory_or_absent "$ORES_ROOT" ".ores runtime root"
 require_real_directory_or_absent "$WORK_ROOT" "worker source root"
@@ -71,9 +84,9 @@ require_real_directory_or_absent "$TARGET_ROOT" "worker target root"
 mkdir -p "$WORK_ROOT" "$TARGET_ROOT" "$CARGO_HOME_CLEAN"
 chmod 700 "$ORES_ROOT" "$WORK_ROOT" "$TARGET_ROOT" "$CARGO_HOME_CLEAN"
 
-# Defense in depth: every Git/Cargo process also starts from a fresh environment.
-# Global/system Git config is disabled so url.*.insteadOf, credential helpers,
-# hooks and protocol policy cannot silently rewrite the reviewed HTTPS origins.
+# Defense in depth: every Git/Cargo/helper process also starts from a fresh
+# environment. Global/system Git config is disabled so url.*.insteadOf,
+# credential helpers, hooks and protocol policy cannot rewrite reviewed origins.
 CLEAN_ENV=(
   env -i
   "HOME=$CLEAN_HOME"
@@ -104,7 +117,7 @@ clone_exact_https() {
   local dest="$3"
   local label="$4"
 
-  is_oid "$oid" || fail "$label gitlink is not a full lowercase Git OID"
+  is_oid "$oid" || fail "$label revision is not a full lowercase Git OID"
   rm -rf "$dest"
   git_clean clone --filter=blob:none --no-checkout "$origin" "$dest"
   git_clean -C "$dest" fetch --depth=1 origin "$oid"
@@ -115,6 +128,29 @@ clone_exact_https() {
   actual_origin="$(git_clean -C "$dest" remote get-url origin)"
   [[ "$actual_oid" == "$oid" ]] || fail "$label checkout drifted"
   [[ "$actual_origin" == "$origin" ]] || fail "$label origin is not the reviewed HTTPS repository"
+}
+
+materialize_private_gitlink() {
+  local source="$1"
+  local oid="$2"
+  local dest="$3"
+
+  is_oid "$oid" || fail "private provenance gitlink is not a full lowercase Git OID"
+  local actual_oid actual_origin
+  actual_oid="$(git_clean -C "$source" rev-parse HEAD)"
+  actual_origin="$(git_clean -C "$source" remote get-url origin)"
+  [[ "$actual_oid" == "$oid" ]] || \
+    fail "private provenance checkout HEAD $actual_oid does not match gitlink $oid"
+  [[ "$actual_origin" == "$LIBS_ORIGIN" ]] || \
+    fail "private provenance checkout origin is not the reviewed HTTPS repository"
+
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  # Archive the committed tree, never the operator checkout's mutable working
+  # tree. The private checkout path and any credentials used to prepare it stay
+  # outside this build environment and are not passed to tar/Cargo.
+  git_clean -C "$source" archive --format=tar "$oid" | \
+    "${CLEAN_ENV[@]}" tar -xf - -C "$dest"
 }
 
 if [[ -L "$K8S_ROOT" || -L "$K8S_ROOT/.git" ]]; then
@@ -141,15 +177,15 @@ git_clean -C "$K8S_ROOT" clean -ffdqx
 actual_provenance_sha="$(git_clean -C "$K8S_ROOT" rev-parse HEAD)"
 [[ "$actual_provenance_sha" == "$PROVENANCE_COMMIT" ]] || fail "provenance checkout drifted"
 
-# `remote/libs` is a gitlink in k8s-cluster. Do not use recursive submodules:
-# the recorded .gitmodules URL is SSH and recursive initialization would expand
-# unrelated provenance. Read the exact gitlink OID from the immutable tree and
-# materialize only this worker dependency root from its reviewed HTTPS origin.
+# `remote/libs` is a private gitlink in k8s-cluster. Do not use recursive
+# submodules or inject a cross-repo token into this build shell. Read the exact
+# gitlink OID from the immutable provenance tree, verify an operator-prepared
+# checkout outside this source tree, and archive only that exact committed tree.
 libs_tree="$(git_clean -C "$K8S_ROOT" ls-tree "$PROVENANCE_COMMIT" -- remote/libs)"
 read -r libs_mode libs_type libs_sha libs_path <<<"$libs_tree"
 [[ "$libs_mode" == "160000" && "$libs_type" == "commit" && "$libs_path" == "remote/libs" ]] || \
   fail "provenance remote/libs entry is not the expected gitlink"
-clone_exact_https "$LIBS_ORIGIN" "$libs_sha" "$LIBS_ROOT" "provenance libs"
+materialize_private_gitlink "$canonical_libs_source" "$libs_sha" "$LIBS_ROOT"
 
 # The split worker is the only deployment subtree replaced. Its sibling path
 # dependencies come from the exact `remote/libs` gitlink recorded by the same
@@ -189,10 +225,10 @@ hash_file() {
 binary_sha256="$(hash_file "$BIN")"
 [[ "$binary_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "could not compute worker binary SHA-256"
 receipt_tmp="$RECEIPT.tmp.$$"
-printf 'schema=indiebuild.worker-provenance.v1\nworker_sha=%s\nprovenance_sha=%s\nbinary_sha256=%s\n' \
-  "$WORKER_SHA" "$PROVENANCE_COMMIT" "$binary_sha256" >"$receipt_tmp"
+printf 'schema=indiebuild.worker-provenance.v1\nworker_sha=%s\nprovenance_sha=%s\nlibs_sha=%s\nbinary_sha256=%s\n' \
+  "$WORKER_SHA" "$PROVENANCE_COMMIT" "$libs_sha" "$binary_sha256" >"$receipt_tmp"
 chmod 600 "$receipt_tmp"
 mv -f "$receipt_tmp" "$RECEIPT"
 
-printf 'worker=%s\nprovenance=%s\nbinary_sha256=%s\nbinary=%s\nreceipt=%s\n' \
-  "$WORKER_SHA" "$PROVENANCE_COMMIT" "$binary_sha256" "$BIN" "$RECEIPT"
+printf 'worker=%s\nprovenance=%s\nlibs=%s\nbinary_sha256=%s\nbinary=%s\nreceipt=%s\n' \
+  "$WORKER_SHA" "$PROVENANCE_COMMIT" "$libs_sha" "$binary_sha256" "$BIN" "$RECEIPT"
