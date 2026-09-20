@@ -2,9 +2,33 @@
 set -euo pipefail
 umask 077
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+script_path="${BASH_SOURCE[0]}"
+script_dir="${script_path%/*}"
+[[ "$script_dir" != "$script_path" ]] || script_dir="."
+ROOT="$(cd "$script_dir/.." && pwd -P)"
 PROVENANCE_COMMIT="${INDIEBUILD_PROVENANCE_COMMIT:-5cfac43c6900898f36f588d044ca34083da1c726}"
 WORKER_SHA="${INDIEBUILD_WORKER_SHA:?INDIEBUILD_WORKER_SHA is required}"
+CLEAN_HOME="${HOME:?HOME is required}"
+CLEAN_PATH="${PATH:?PATH is required}"
+CLEAN_RUSTUP_HOME="${RUSTUP_HOME:-}"
+
+# This script runs as the ci-worker *build* command. ores-compose deliberately
+# admits the service environment before every phase, so scrub the current shell
+# before invoking even trusted helper binaries. The build needs only filesystem,
+# public HTTPS, Cargo/Rust and the two immutable revisions captured above.
+for exported_name in $(compgen -e); do
+  case "$exported_name" in
+    HOME|PATH|RUSTUP_HOME) ;;
+    *) unset "$exported_name" ;;
+  esac
+done
+export HOME="$CLEAN_HOME" PATH="$CLEAN_PATH"
+if [[ -n "$CLEAN_RUSTUP_HOME" ]]; then
+  export RUSTUP_HOME="$CLEAN_RUSTUP_HOME"
+else
+  unset RUSTUP_HOME || true
+fi
+
 ORES_ROOT="$ROOT/.ores"
 WORK_ROOT="$ORES_ROOT/ci-worker-source"
 K8S_ROOT="$WORK_ROOT/k8s-cluster"
@@ -45,21 +69,21 @@ require_real_directory_or_absent "$TARGET_ROOT" "worker target root"
 mkdir -p "$WORK_ROOT" "$TARGET_ROOT" "$CARGO_HOME_CLEAN"
 chmod 700 "$ORES_ROOT" "$WORK_ROOT" "$TARGET_ROOT" "$CARGO_HOME_CLEAN"
 
-# Git and Cargo never receive the compose parent's control-plane credentials.
+# Defense in depth: every Git/Cargo process also starts from a fresh environment.
 # Global/system Git config is disabled so url.*.insteadOf, credential helpers,
 # hooks and protocol policy cannot silently rewrite the reviewed HTTPS origins.
 CLEAN_ENV=(
   env -i
-  "HOME=$HOME"
-  "PATH=$PATH"
+  "HOME=$CLEAN_HOME"
+  "PATH=$CLEAN_PATH"
   "GIT_CONFIG_NOSYSTEM=1"
   "GIT_CONFIG_GLOBAL=/dev/null"
   "GIT_TERMINAL_PROMPT=0"
   "GIT_ASKPASS=/bin/false"
   "CARGO_HOME=$CARGO_HOME_CLEAN"
 )
-if [[ -n "${RUSTUP_HOME:-}" ]]; then
-  CLEAN_ENV+=("RUSTUP_HOME=$RUSTUP_HOME")
+if [[ -n "$CLEAN_RUSTUP_HOME" ]]; then
+  CLEAN_ENV+=("RUSTUP_HOME=$CLEAN_RUSTUP_HOME")
 fi
 
 git_clean() {
@@ -126,13 +150,16 @@ BIN="$TARGET_ROOT/debug/dd-build-server"
 test -x "$BIN" || fail "expected worker binary was not produced"
 
 hash_file() {
+  local output hash
   if command -v sha256sum >/dev/null 2>&1; then
-    "${CLEAN_ENV[@]}" sha256sum "$1" | awk '{print $1}'
+    output="$("${CLEAN_ENV[@]}" sha256sum "$1")"
   elif command -v shasum >/dev/null 2>&1; then
-    "${CLEAN_ENV[@]}" shasum -a 256 "$1" | awk '{print $1}'
+    output="$("${CLEAN_ENV[@]}" shasum -a 256 "$1")"
   else
     fail "sha256sum or shasum is required to bind the built worker binary"
   fi
+  hash="${output%% *}"
+  printf '%s\n' "$hash"
 }
 
 binary_sha256="$(hash_file "$BIN")"
