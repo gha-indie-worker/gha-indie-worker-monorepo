@@ -1,4 +1,4 @@
-name: laptop worker provenance build
+name: laptop worker provenance contract
 
 on:
   push:
@@ -26,9 +26,9 @@ env:
   INDIEBUILD_PROVENANCE_COMMIT: 5cfac43c6900898f36f588d044ca34083da1c726
 
 jobs:
-  provenance-build:
+  hosted-contract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -44,56 +44,46 @@ jobs:
           bash -n scripts/ci-worker-healthcheck.sh
           bash -n scripts/cloudflared-healthcheck.sh
 
-      - name: Build exact split worker in immutable provenance workspace
+      - name: Private provenance requires an operator checkout before source effects
         shell: bash
         env:
-          # Sentinels must not influence Git/Cargo or become part of the build.
+          # Sentinels model runtime-only values that must not influence source
+          # admission. No private repository credential is supplied here.
           INDIEBUILD_GITHUB_WEBHOOK_SECRET: ci-must-not-reach-bootstrap
           INDIEBUILD_WORKER_AUTH_SECRET: ci-must-not-reach-bootstrap
           INDIEBUILD_CLOUDFLARE_TUNNEL_TOKEN: ci-must-not-reach-bootstrap
-        run: bash scripts/bootstrap-ci-worker.sh
-
-      - name: Verify provenance receipt and executable
-        shell: bash
         run: |
           set -euo pipefail
-          receipt=.ores/ci-worker-target/provenance.receipt
-          binary=.ores/ci-worker-target/debug/dd-build-server
-          test -s "$receipt"
-          test -x "$binary"
-          grep -Fxq 'schema=indiebuild.worker-provenance.v1' "$receipt"
-          grep -Fxq "worker_sha=$INDIEBUILD_WORKER_SHA" "$receipt"
-          grep -Fxq "provenance_sha=$INDIEBUILD_PROVENANCE_COMMIT" "$receipt"
-          hash="$(sed -n 's/^binary_sha256=//p' "$receipt")"
-          [[ "$hash" =~ ^[0-9a-f]{64}$ ]]
-          test "$(sha256sum "$binary" | awk '{print $1}')" = "$hash"
-
-      - name: Launcher rejects tampered binary before startup
-        shell: bash
-        run: |
-          set -euo pipefail
-          binary=.ores/ci-worker-target/debug/dd-build-server
-          cp "$binary" "$binary.real"
-          printf '\0' >> "$binary"
-          key="$RUNNER_TEMP/fake-app-key.pem"
-          printf '%s\n' 'not-a-real-key-but-a-regular-test-file' >"$key"
-          chmod 600 "$key"
-          work="$RUNNER_TEMP/worker-state"
-          mkdir -p "$work"
+          rm -rf .ores
           set +e
-          BUILD_SERVER_WORK_ROOT="$work" \
-          BUILD_SERVER_GITHUB_APP_ID=12345 \
-          BUILD_SERVER_GITHUB_APP_PRIVATE_KEY_PATH="$key" \
-          BUILD_SERVER_GITHUB_WEBHOOK_SECRET=0123456789abcdef0123456789abcdef \
-          BUILD_SERVER_AUTH_SECRET=abcdef0123456789abcdef0123456789 \
-          INDIEBUILD_WORKER_SHA="$INDIEBUILD_WORKER_SHA" \
-          INDIEBUILD_PROVENANCE_COMMIT="$INDIEBUILD_PROVENANCE_COMMIT" \
-            bash scripts/run-ci-worker.sh >"$RUNNER_TEMP/launcher.out" 2>"$RUNNER_TEMP/launcher.err"
+          bash scripts/bootstrap-ci-worker.sh >"$RUNNER_TEMP/bootstrap.out" 2>"$RUNNER_TEMP/bootstrap.err"
           status=$?
           set -e
-          test "$status" -eq 40
-          grep -Fq 'worker binary hash does not match its provenance receipt' "$RUNNER_TEMP/launcher.err"
-          mv "$binary.real" "$binary"
+          test "$status" -eq 2
+          grep -Fq 'INDIEBUILD_LIBS_SOURCE_DIR is required for the private provenance gitlink' "$RUNNER_TEMP/bootstrap.err"
+          test ! -e .ores
+          ! grep -Fq 'ci-must-not-reach-bootstrap' "$RUNNER_TEMP/bootstrap.out" "$RUNNER_TEMP/bootstrap.err"
+
+      - name: Provenance receipt binds private gitlink and binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'libs_sha=%s' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'receipt_value libs_sha' scripts/run-ci-worker.sh
+          grep -Fq 'receipt contains an invalid private provenance gitlink SHA' scripts/run-ci-worker.sh
+          grep -Fq 'worker binary hash does not match its provenance receipt' scripts/run-ci-worker.sh
+
+      - name: Bootstrap never admits ambient Git credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'GIT_CONFIG_NOSYSTEM=1' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'GIT_CONFIG_GLOBAL=/dev/null' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'GIT_TERMINAL_PROMPT=0' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'GIT_ASKPASS=/bin/false' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'protocol.ssh.allow=never' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'materialize_private_gitlink' scripts/bootstrap-ci-worker.sh
+          ! grep -Eq 'GH_TOKEN|GITHUB_TOKEN|github_pat_|ghp_' scripts/bootstrap-ci-worker.sh
 
       - name: Runtime wrappers do not retain phase secrets
         shell: bash
