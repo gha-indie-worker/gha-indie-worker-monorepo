@@ -1,0 +1,104 @@
+name: laptop worker provenance build
+
+on:
+  push:
+    branches:
+      - feat/laptop-ci-worker-source
+  pull_request:
+    paths:
+      - "scripts/bootstrap-ci-worker.sh"
+      - "scripts/run-ci-worker.sh"
+      - "scripts/ci-worker-healthcheck.sh"
+      - "scripts/cloudflared-healthcheck.sh"
+      - "config/ci-worker-webhook-rules.json"
+      - ".github/workflows/laptop-worker-provenance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: laptop-worker-provenance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  INDIEBUILD_WORKER_SHA: be8f6aac3eb6e1d1f76d613e3082ca2114ceb2bf
+  INDIEBUILD_PROVENANCE_COMMIT: 5cfac43c6900898f36f588d044ca34083da1c726
+
+jobs:
+  provenance-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Static shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/bootstrap-ci-worker.sh
+          bash -n scripts/run-ci-worker.sh
+          bash -n scripts/ci-worker-healthcheck.sh
+          bash -n scripts/cloudflared-healthcheck.sh
+
+      - name: Build exact split worker in immutable provenance workspace
+        shell: bash
+        env:
+          # Sentinels must not influence Git/Cargo or become part of the build.
+          INDIEBUILD_GITHUB_WEBHOOK_SECRET: ci-must-not-reach-bootstrap
+          INDIEBUILD_WORKER_AUTH_SECRET: ci-must-not-reach-bootstrap
+          INDIEBUILD_CLOUDFLARE_TUNNEL_TOKEN: ci-must-not-reach-bootstrap
+        run: bash scripts/bootstrap-ci-worker.sh
+
+      - name: Verify provenance receipt and executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt=.ores/ci-worker-target/provenance.receipt
+          binary=.ores/ci-worker-target/debug/dd-build-server
+          test -s "$receipt"
+          test -x "$binary"
+          grep -Fxq 'schema=indiebuild.worker-provenance.v1' "$receipt"
+          grep -Fxq "worker_sha=$INDIEBUILD_WORKER_SHA" "$receipt"
+          grep -Fxq "provenance_sha=$INDIEBUILD_PROVENANCE_COMMIT" "$receipt"
+          hash="$(sed -n 's/^binary_sha256=//p' "$receipt")"
+          [[ "$hash" =~ ^[0-9a-f]{64}$ ]]
+          test "$(sha256sum "$binary" | awk '{print $1}')" = "$hash"
+
+      - name: Launcher rejects tampered binary before startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=.ores/ci-worker-target/debug/dd-build-server
+          cp "$binary" "$binary.real"
+          printf '\0' >> "$binary"
+          key="$RUNNER_TEMP/fake-app-key.pem"
+          printf '%s\n' 'not-a-real-key-but-a-regular-test-file' >"$key"
+          chmod 600 "$key"
+          work="$RUNNER_TEMP/worker-state"
+          mkdir -p "$work"
+          set +e
+          BUILD_SERVER_WORK_ROOT="$work" \
+          BUILD_SERVER_GITHUB_APP_ID=12345 \
+          BUILD_SERVER_GITHUB_APP_PRIVATE_KEY_PATH="$key" \
+          BUILD_SERVER_GITHUB_WEBHOOK_SECRET=0123456789abcdef0123456789abcdef \
+          BUILD_SERVER_AUTH_SECRET=abcdef0123456789abcdef0123456789 \
+          INDIEBUILD_WORKER_SHA="$INDIEBUILD_WORKER_SHA" \
+          INDIEBUILD_PROVENANCE_COMMIT="$INDIEBUILD_PROVENANCE_COMMIT" \
+            bash scripts/run-ci-worker.sh >"$RUNNER_TEMP/launcher.out" 2>"$RUNNER_TEMP/launcher.err"
+          status=$?
+          set -e
+          test "$status" -eq 40
+          grep -Fq 'worker binary hash does not match its provenance receipt' "$RUNNER_TEMP/launcher.err"
+          mv "$binary.real" "$binary"
+
+      - name: Runtime wrappers do not retain phase secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'unset BUILD_SERVER_GITHUB_WEBHOOK_SECRET' scripts/ci-worker-healthcheck.sh
+          grep -Fq 'unset BUILD_SERVER_AUTH_SECRET' scripts/ci-worker-healthcheck.sh
+          grep -Fq 'unset TUNNEL_TOKEN' scripts/cloudflared-healthcheck.sh
