@@ -37,13 +37,15 @@ done
 
 # Capture secret-bearing bindings as ordinary non-exported shell variables, then
 # remove them from the process environment before invoking any helper binary.
-# They are restored only for the final exec of dd-build-server.
+# They are restored only for the final exec of dd-build-server. The private
+# provenance source path is build-only and is never restored to runtime.
 app_key_path_input="$BUILD_SERVER_GITHUB_APP_PRIVATE_KEY_PATH"
 webhook_secret="$BUILD_SERVER_GITHUB_WEBHOOK_SECRET"
 worker_auth_secret="$BUILD_SERVER_AUTH_SECRET"
 unset BUILD_SERVER_GITHUB_APP_PRIVATE_KEY_PATH
 unset BUILD_SERVER_GITHUB_WEBHOOK_SECRET
 unset BUILD_SERVER_AUTH_SECRET
+unset INDIEBUILD_LIBS_SOURCE_DIR
 
 [[ "$BUILD_SERVER_GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]] || refuse "BUILD_SERVER_GITHUB_APP_ID must be a positive decimal App id"
 is_oid "$INDIEBUILD_WORKER_SHA" || refuse "INDIEBUILD_WORKER_SHA must be a full lowercase 40-character Git OID"
