@@ -10,6 +10,11 @@
 *.sqlite
 Cargo.lock
 
+# ores-compose / IndieBuild local runtime material. These directories contain
+# fetched source trees, build outputs, job logs and durable report intents; they
+# are operator runtime state and must never become repository policy.
+/.ores/
+
 # Repository-local temporary data and authorized Git worktrees
 tmp
 temp
