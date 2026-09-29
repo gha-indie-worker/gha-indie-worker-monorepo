@@ -10,6 +10,12 @@
 *.sqlite
 Cargo.lock
 
+# Zed package-manager local state. These are generated during frozen local
+# bootstrap and must never make the pinned source checkout appear dirty.
+/.zed/
+/zed_modules/
+/.ores/
+
 # Repository-local temporary data and authorized Git worktrees
 tmp
 temp
