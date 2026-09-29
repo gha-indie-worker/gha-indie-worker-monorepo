@@ -1,4 +1,33 @@
+[dependencies]
+"gha-indie-worker/gha-indie-worker-api-server" = "=0.1.0"
+"gha-indie-worker/gha-indie-worker-web-server" = "=0.1.0"
+
+[install]
+adapter = "none"
+
+[interop.git]
+consume_gitmodules = true
+
+[package]
+description = "Product monorepo vendoring the gha-indie-worker application services"
+license = "MIT"
 name = "gha-indie-worker-monorepo"
-kind = "monorepo"
+org = "gha-indie-worker"
 version = "0.1.0"
 
+[package.repository]
+url = "https://github.com/gha-indie-worker/gha-indie-worker-monorepo"
+vcs = "git"
+
+[publish]
+exclude = []
+include_readme = false
+tag_format = "v{version}"
+
+[scripts]
+
+[workspace]
+members = [
+    "apps/gha-indie-worker-api-server.rs",
+    "apps/gha-indie-worker-web-server.rs",
+]
