@@ -1,3 +1,10 @@
+921c13f40b707f2b358ba2dc6cc9ec1b778d93c4  examples/actor-isolation-support.ores
+f53695a6967197758bb13d90916359d39f63b301  examples/callables.ores
+98e7b2af2e935729ac8e3dead01a30ccd7bb56b7  examples/modules-namespaces-callables.ores
+dcf38829ab6de197231f8d0a513971d6abefb6fb  examples/process-gc.ores
+f755692589a27959e459a258547e2107e90568b4  examples/shared-private-actor-isolation.ores
+48737956aed8a04e6a8d973aa88e872e0ca82457  examples/showcase.ores
+961f5da554fac94fcd3e486dc67c1bcd92e7b94b  examples/together.ores
 10c82706e9c282055806bd7cacf2443c5e040a91  pom.xml
 125a37cf6ab7cbeaabf53a024dcb966b2dedf56a  src/main/java/dev/oreslang/OresLanguage.java
 e967d6671c3adea1c47adb8ec732a3b7f6fce61e  src/main/java/dev/oreslang/ast/Ast.java
