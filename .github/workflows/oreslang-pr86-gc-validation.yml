@@ -72,6 +72,9 @@ jobs:
           CP="target/classes:target/test-classes:$(cat /tmp/ores-cp)"
           javac -cp "$CP" /tmp/ActorGcProbe.java
           java -cp "$CP:/tmp" ActorGcProbe
+      - name: Seed Maven packaging plugins
+        working-directory: _ci/oreslang-pr86/source
+        run: mvn -B -ntp -DskipTests package
       - name: Stage Maven toolchain for private sandbox
         if: always()
         shell: bash
