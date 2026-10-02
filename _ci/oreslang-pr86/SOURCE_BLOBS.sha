@@ -6,15 +6,15 @@ f755692589a27959e459a258547e2107e90568b4  examples/shared-private-actor-isolatio
 48737956aed8a04e6a8d973aa88e872e0ca82457  examples/showcase.ores
 961f5da554fac94fcd3e486dc67c1bcd92e7b94b  examples/together.ores
 10c82706e9c282055806bd7cacf2443c5e040a91  pom.xml
-125a37cf6ab7cbeaabf53a024dcb966b2dedf56a  src/main/java/dev/oreslang/OresLanguage.java
 e967d6671c3adea1c47adb8ec732a3b7f6fce61e  src/main/java/dev/oreslang/ast/Ast.java
 fcba04eb2316cade4592a0dc26c4f3e2018a6cee  src/main/java/dev/oreslang/compiler/IncrementalCompiler.java
 80c76f972d5722474d3c29b64523fac8446129cf  src/main/java/dev/oreslang/compiler/OresCompiler.java
 bb1f667fe378b7e2ba6814847955b74369489673  src/main/java/dev/oreslang/launcher/OresMain.java
 251127c57910efee004f7414da14304f3f47d8c4  src/main/java/dev/oreslang/nodes/OresEvalRootNode.java
 62ac55ad410d3e07d9494b73b3f658d43de70351  src/main/java/dev/oreslang/nodes/OresInteropRootNode.java
+125a37cf6ab7cbeaabf53a024dcb966b2dedf56a  src/main/java/dev/oreslang/OresLanguage.java
 69b0112141079c92b9e43f465737af87fa8a6496  src/main/java/dev/oreslang/parser/Lexer.java
-47acbbc48191ca4946c3813132e62801a0d564a7  src/main/java/dev/oreslang/parser/Parser.java
+f9a44d597d88f4caf818f4a45c139c893a356fa5  src/main/java/dev/oreslang/parser/Parser.java
 9f0ebe1abec8577e56e9df315965ea8394c0992b  src/main/java/dev/oreslang/parser/Token.java
 ff6a794a692ccdbb987ff09feacf9599512a434a  src/main/java/dev/oreslang/runtime/ActorRuntime.java
 0fbe736580048f2e509ddfc69e462ec3bbd07ad4  src/main/java/dev/oreslang/runtime/CapabilityChecker.java
@@ -50,6 +50,6 @@ c488265a1d8b03fed39fd7957956ee90ce1b4620  src/test/java/dev/oreslang/ParserTest.
 1b6bb7a6592fd52bf21dbc2afb2712355baab2a0  src/test/java/dev/oreslang/PrivateActorIsolationTest.java
 9eff8c3f587ee308927f076808c69286d994b456  src/test/java/dev/oreslang/ReturnedDestructuringTest.java
 84b2267ae9833a91d67077beda845d02e6f51202  src/test/java/dev/oreslang/RoutineAndLoopTest.java
-685ca6528b5fa0a39ac08f7fbe6bdfefbcc1ff8b  src/test/java/dev/oreslang/SharedPrivateActorIsolationProofTest.java
 ab36b19497e293029fa569f2649231bd94ffc089  src/test/java/dev/oreslang/runtime/RuntimeGarbageCollectorTest.java
 e5f2904633172d72b9f9fd4c10699740e2c72d14  src/test/java/dev/oreslang/runtime/SharedMutexPublicationTest.java
+685ca6528b5fa0a39ac08f7fbe6bdfefbcc1ff8b  src/test/java/dev/oreslang/SharedPrivateActorIsolationProofTest.java
