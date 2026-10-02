@@ -1,0 +1,29 @@
+name: oreslang-pr87-actor-isolation-validation
+
+on:
+  pull_request:
+    paths:
+      - '_ci/oreslang-pr87/**'
+      - '.github/workflows/oreslang-pr87-actor-isolation-validation.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.3'
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+      - name: Runtime diagnostics
+        run: |
+          java --version
+          mvn --version
+      - name: Run exact actor isolation suite
+        working-directory: _ci/oreslang-pr87
+        run: mvn -B -ntp test
