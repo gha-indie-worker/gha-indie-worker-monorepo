@@ -34,6 +34,37 @@ jobs:
           test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 55
           java --version
           mvn --version
+      - name: Probe actor.gc diagnostic
+        working-directory: _ci/oreslang-pr86/source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mvn -B -ntp -q -DskipTests test-compile dependency:build-classpath -Dmdep.outputFile=/tmp/ores-cp
+          cat >/tmp/ActorGcProbe.java <<'JAVA'
+          import dev.oreslang.OresLanguage;
+          import org.graalvm.polyglot.Context;
+          import org.graalvm.polyglot.PolyglotException;
+          import org.graalvm.polyglot.Source;
+          public final class ActorGcProbe {
+            public static void main(String[] args) throws Exception {
+              Source source = Source.newBuilder(OresLanguage.ID,
+                  "pub fnc main() => void { actor.gc(); return; }",
+                  "actor-gc-probe.ores").mimeType(OresLanguage.MIME_TYPE).build();
+              try (Context context = Context.newBuilder(OresLanguage.ID).allowAllAccess(false).build()) {
+                context.eval(source);
+                System.out.println("PROBE_NO_ERROR");
+              } catch (PolyglotException e) {
+                System.out.println("PROBE_MESSAGE=" + e.getMessage());
+                System.out.println("PROBE_GUEST=" + e.isGuestException());
+                System.out.println("PROBE_HOST=" + e.isHostException());
+                System.out.println("PROBE_INTERNAL=" + e.isInternalError());
+              }
+            }
+          }
+          JAVA
+          CP="target/classes:target/test-classes:$(cat /tmp/ores-cp)"
+          javac -cp "$CP" /tmp/ActorGcProbe.java
+          java -cp "$CP:/tmp" ActorGcProbe
       - name: Run focused GC hardening tests
         working-directory: _ci/oreslang-pr86/source
         run: mvn -B -ntp -Dtest=RuntimeGarbageCollectorTest,GarbageCollectionLanguageTest test
