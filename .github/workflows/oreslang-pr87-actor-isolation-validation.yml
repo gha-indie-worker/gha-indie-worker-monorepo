@@ -9,20 +9,21 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: graalvm/setup-graalvm@v1
-        with:
-          version: '25.3'
-          java-version: '25'
-          distribution: 'graalvm'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache: maven
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Select JDK 21
+        run: |
+          set -Eeuo pipefail
+          JAVA_HOME_CANDIDATE="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+          echo "JAVA_HOME=$JAVA_HOME_CANDIDATE" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_CANDIDATE/bin" >> "$GITHUB_PATH"
       - name: Runtime diagnostics
         run: |
+          set -Eeuo pipefail
           java --version
+          javac --version
           mvn --version
       - name: Run exact actor isolation suite
         working-directory: _ci/oreslang-pr87
