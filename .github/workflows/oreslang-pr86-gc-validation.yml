@@ -13,15 +13,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Select preinstalled JDK 21
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          JAVA21_BIN="$(find /usr/lib/jvm /opt/hostedtoolcache -type f -path '*/bin/javac' 2>/dev/null | grep -E '(/21([^0-9]|$)|jdk-21|21\.)' | head -n 1)"
-          test -n "$JAVA21_BIN"
-          JAVA_HOME_CANDIDATE="$(dirname "$(dirname "$JAVA21_BIN")")"
-          echo "JAVA_HOME=$JAVA_HOME_CANDIDATE" >> "$GITHUB_ENV"
-          echo "$JAVA_HOME_CANDIDATE/bin" >> "$GITHUB_PATH"
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
       - name: Checkout exact Oreslang PR86 head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
