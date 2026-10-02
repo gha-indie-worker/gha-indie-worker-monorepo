@@ -18,17 +18,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Checkout exact Oreslang PR86 head
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: ores-truffle-oreslang/oreslang-source.java
-          ref: 960f5c6ab36b6f713bfa60ad5095033ba9764410
-          path: _ci/oreslang-pr86/source
-      - name: Verify exact source head
+      - name: Verify exact PR86 source mirror
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git -C _ci/oreslang-pr86/source rev-parse HEAD)" = "960f5c6ab36b6f713bfa60ad5095033ba9764410"
+          cd _ci/oreslang-pr86/source
+          while read -r expected path; do
+            test -n "$expected"
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected" || {
+              echo "::error file=$path::blob mismatch expected=$expected actual=$actual"
+              exit 1
+            }
+          done < ../SOURCE_BLOBS.sha
+          test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 48
           java --version
           mvn --version
       - name: Run focused GC hardening tests
