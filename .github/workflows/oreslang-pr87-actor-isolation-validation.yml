@@ -13,10 +13,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Select JDK 21
+      - name: Select preinstalled JDK 21
+        shell: bash
         run: |
           set -Eeuo pipefail
-          JAVA_HOME_CANDIDATE="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+          JAVA21_BIN="$(
+            find /usr/lib/jvm /opt/hostedtoolcache -type f -path '*/bin/javac' 2>/dev/null |
+              grep -E '(/21([^0-9]|$)|jdk-21|21\.)' |
+              head -n 1
+          )"
+          test -n "$JAVA21_BIN"
+          JAVA_HOME_CANDIDATE="$(dirname "$(dirname "$JAVA21_BIN")")"
           echo "JAVA_HOME=$JAVA_HOME_CANDIDATE" >> "$GITHUB_ENV"
           echo "$JAVA_HOME_CANDIDATE/bin" >> "$GITHUB_PATH"
       - name: Runtime diagnostics
@@ -25,6 +32,7 @@ jobs:
           java --version
           javac --version
           mvn --version
+          javac --version 2>&1 | grep -E '(^| )21([.]|$)'
       - name: Run exact actor isolation suite
         working-directory: _ci/oreslang-pr87
         run: mvn -B -ntp test
