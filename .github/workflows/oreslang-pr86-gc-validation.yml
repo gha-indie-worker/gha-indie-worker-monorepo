@@ -92,6 +92,23 @@ jobs:
       - name: Run focused GC hardening tests
         working-directory: _ci/oreslang-pr86/source
         run: mvn -B -ntp -Dtest=RuntimeGarbageCollectorTest,GarbageCollectionLanguageTest test
+      - name: Restage Maven cache after focused test
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf _ci/oreslang-pr86/toolchain-post-test
+          mkdir -p _ci/oreslang-pr86/toolchain-post-test
+          cp -a /usr/share/apache-maven-3.9.16 _ci/oreslang-pr86/toolchain-post-test/apache-maven
+          cp -a "$HOME/.m2" _ci/oreslang-pr86/toolchain-post-test/m2
+      - name: Upload post-test Maven cache
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: oreslang-maven-toolchain-post-test
+          path: _ci/oreslang-pr86/toolchain-post-test
+          if-no-files-found: error
+          retention-days: 1
       - name: Run full Maven verification
         working-directory: _ci/oreslang-pr86/source
         run: mvn -B -ntp verify
