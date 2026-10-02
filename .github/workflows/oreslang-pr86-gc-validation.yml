@@ -18,7 +18,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: maven
       - name: Checkout exact Oreslang PR86 head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
