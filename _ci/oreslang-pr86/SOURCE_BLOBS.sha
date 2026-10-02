@@ -7,7 +7,7 @@ bb1f667fe378b7e2ba6814847955b74369489673  src/main/java/dev/oreslang/launcher/Or
 251127c57910efee004f7414da14304f3f47d8c4  src/main/java/dev/oreslang/nodes/OresEvalRootNode.java
 62ac55ad410d3e07d9494b73b3f658d43de70351  src/main/java/dev/oreslang/nodes/OresInteropRootNode.java
 69b0112141079c92b9e43f465737af87fa8a6496  src/main/java/dev/oreslang/parser/Lexer.java
-f9a44d597d88f4caf818f4a45c139c893a356fa5  src/main/java/dev/oreslang/parser/Parser.java
+47acbbc48191ca4946c3813132e62801a0d564a7  src/main/java/dev/oreslang/parser/Parser.java
 9f0ebe1abec8577e56e9df315965ea8394c0992b  src/main/java/dev/oreslang/parser/Token.java
 ff6a794a692ccdbb987ff09feacf9599512a434a  src/main/java/dev/oreslang/runtime/ActorRuntime.java
 0fbe736580048f2e509ddfc69e462ec3bbd07ad4  src/main/java/dev/oreslang/runtime/CapabilityChecker.java
