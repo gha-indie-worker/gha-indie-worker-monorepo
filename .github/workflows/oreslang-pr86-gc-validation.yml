@@ -34,6 +34,13 @@ jobs:
           test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 55
           java --version
           mvn --version
+      - name: Upload public PR86 baseline snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: oreslang-pr86-baseline
+          path: _ci/oreslang-pr86/source
+          if-no-files-found: error
+          retention-days: 1
       - name: Probe actor.gc diagnostic
         working-directory: _ci/oreslang-pr86/source
         shell: bash
