@@ -31,7 +31,7 @@ jobs:
               exit 1
             }
           done < ../SOURCE_BLOBS.sha
-          test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 48
+          test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 55
           java --version
           mvn --version
       - name: Run focused GC hardening tests
