@@ -1,5 +1,5 @@
 source=ores-truffle-oreslang/oreslang-source.java
 pr=116
-head=c082fb5c64be956e5c284029b8619fccc3530225
+head=5cd00f2f5653ad77a1a8651f7a5c6c4cf74b571b
 mode=exact-blob-mirror
 files=66

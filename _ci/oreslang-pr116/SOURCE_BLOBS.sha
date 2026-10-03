@@ -58,7 +58,7 @@ e55d49a3ece6656ecf32e2a1347d010e87c60ac1  src/test/java/dev/oreslang/PolyglotFea
 9a69d821725711eed4930c295ded8c635550c043  src/test/java/dev/oreslang/PolyglotSmokeTest.java
 1b6bb7a6592fd52bf21dbc2afb2712355baab2a0  src/test/java/dev/oreslang/PrivateActorIsolationTest.java
 9eff8c3f587ee308927f076808c69286d994b456  src/test/java/dev/oreslang/ReturnedDestructuringTest.java
-f37f0981b91267230bf7c566e7ab561ba16db1dc  src/test/java/dev/oreslang/RoutineAndLoopTest.java
+0d320a8603164372392c408af601c718e1773738  src/test/java/dev/oreslang/RoutineAndLoopTest.java
 685ca6528b5fa0a39ac08f7fbe6bdfefbcc1ff8b  src/test/java/dev/oreslang/SharedPrivateActorIsolationProofTest.java
 20a158a419eb8323a2e4523f99ebbc5d7c46c464  src/test/java/dev/oreslang/launcher/CompilerCheckModeTest.java
 36c3d9cb6cbc65cb468ee3aec26c26aaf55656f2  src/test/java/dev/oreslang/runtime/ActorCapabilityIsolationTest.java
