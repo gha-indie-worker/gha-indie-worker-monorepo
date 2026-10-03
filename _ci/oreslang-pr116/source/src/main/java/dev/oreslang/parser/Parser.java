@@ -113,13 +113,6 @@ public final class Parser {
         return new Ast.ImportDecl(kind, names, wildcard, namespace, path);
     }
 
-    private String consumeImportName(Ast.ImportKind kind) {
-        if (kind == Ast.ImportKind.FUNCTION) {
-            return consumeCallableName("expected imported function name");
-        }
-        return consume(IDENT, "expected imported name").lexeme();
-    }
-
     private Ast.ModuleDecl parseModule(List<Ast.Annotation> annotations) {
         String name = consume(IDENT, "expected flat module name").lexeme();
         if (check(DOT)) throw error(peek(), "modules cannot be nested or dotted");
@@ -614,9 +607,7 @@ public final class Parser {
             java.util.LinkedHashMap<String, Ast.TypeRef> members = new java.util.LinkedHashMap<>();
             if (!check(RBRACE)) {
                 do {
-                    String field;
-                    if (match(IDENT, STRING)) field = previous().lexeme();
-                    else throw error(peek(), "expected record type field name");
+                    String field = consumeStaticObjectKeyName("expected record type field name");
                     consume(COLON, "expected ':' after record type field name");
                     Ast.TypeRef fieldType = parseTypeRef();
                     if (members.putIfAbsent(field, fieldType) != null) {
@@ -1101,13 +1092,45 @@ public final class Parser {
         return false;
     }
 
+    private String consumeImportName(Ast.ImportKind kind) {
+        if (kind == Ast.ImportKind.FUNCTION) return consumeCallableName("expected imported function name");
+        return consume(IDENT, "expected imported name").lexeme();
+    }
+
     private String consumeCallableName(String message) {
         Token token = peek();
-        if (token.type() == IDENT || isReservedCallableName(token.type())) {
+        if (isCallableNameToken(token.type())) {
             advance();
             return token.lexeme();
         }
         throw error(token, message);
+    }
+
+    private String consumeStaticObjectKeyName(String message) {
+        if (match(STRING)) return previous().lexeme();
+        Token token = peek();
+        if (isMemberNameToken(token.type())) {
+            advance();
+            return token.lexeme();
+        }
+        throw error(token, message);
+    }
+
+    private String consumeMemberName() {
+        Token token = peek();
+        if (isMemberNameToken(token.type())) {
+            advance();
+            return token.lexeme();
+        }
+        throw error(token, "expected member name after '.'");
+    }
+
+    private static boolean isCallableNameToken(Token.Type type) {
+        return type == IDENT || isReservedCallableName(type);
+    }
+
+    private static boolean isReservedCallableName(Token.Type type) {
+        return type == STOP || type == DO || type == DONE;
     }
 
     private boolean reservedCallableNameFollowedByInvocation(int nameIndex) {
@@ -1118,24 +1141,6 @@ public final class Parser {
         return next.type() == LT
                 && adjacent(tokens.get(nameIndex), next)
                 && looksLikeTypeArgumentCallAt(nextIndex);
-    }
-
-    private static boolean isReservedCallableName(Token.Type type) {
-        return type == STOP || type == DO || type == DONE;
-    }
-
-    private String consumeMemberName() {
-        Token token = peek();
-        if (isMemberNameToken(token.type())) {
-            if (isReservedCallableName(token.type())
-                    && !reservedCallableNameFollowedByInvocation(current)) {
-                throw error(token, "'" + token.lexeme()
-                        + "' is reserved and may only be used as a function name in a call");
-            }
-            advance();
-            return token.lexeme();
-        }
-        throw error(token, "expected member name after '.'");
     }
 
     /**
@@ -1170,8 +1175,11 @@ public final class Parser {
         // 'actor' remains reserved, but in expression position it names the
         // actor-local runtime namespace (actor.gc and future local primitives).
         if (match(ACTOR)) return new Ast.NameExpr("actor");
-        if (isReservedCallableName(peek().type())
-                && reservedCallableNameFollowedByInvocation(current)) {
+        if (isReservedCallableName(peek().type())) {
+            if (!reservedCallableNameFollowedByInvocation(current)) {
+                throw error(peek(), "'" + peek().lexeme()
+                        + "' is reserved and may only be used as a callable name or object/map key");
+            }
             return new Ast.NameExpr(advance().lexeme());
         }
         if (match(IDENT)) return new Ast.NameExpr(previous().lexeme());
@@ -1221,11 +1229,18 @@ public final class Parser {
         List<Ast.ObjectField> fields = new ArrayList<>();
         if (!check(RBRACE)) {
             do {
-                String name;
-                if (match(IDENT, STRING)) name = previous().lexeme();
-                else throw error(peek(), "expected object field name");
-                consume(COLON, "expected ':' after object field name");
-                fields.add(new Ast.ObjectField(name, parseExpression()));
+                Ast.ObjectField field;
+                if (match(BACKTICK)) {
+                    Ast.Expr key = parseExpression();
+                    consume(BACKTICK, "expected closing backtick after dynamic object key");
+                    consume(COLON, "expected ':' after dynamic object key");
+                    field = Ast.ObjectField.dynamic(key, parseExpression());
+                } else {
+                    String name = consumeStaticObjectKeyName("expected object field name");
+                    consume(COLON, "expected ':' after object field name");
+                    field = Ast.ObjectField.named(name, parseExpression());
+                }
+                fields.add(field);
             } while (match(COMMA));
         }
         consume(RBRACE, "expected '}' after obj literal");
