@@ -1,8 +1,8 @@
 921c13f40b707f2b358ba2dc6cc9ec1b778d93c4  examples/actor-isolation-support.ores
 f53695a6967197758bb13d90916359d39f63b301  examples/callables.ores
-705b75027b0a043c8e435dc2d3b6649cf7adb0a9  examples/circular_imports/README.md
 ddb4440de364d3cd5d6eb6316bdcc3a702fddd55  examples/circular_imports/a.ores
 a7f101fb2520b949041f42a18d6e333b8fa2fa80  examples/circular_imports/b.ores
+705b75027b0a043c8e435dc2d3b6649cf7adb0a9  examples/circular_imports/README.md
 98e7b2af2e935729ac8e3dead01a30ccd7bb56b7  examples/modules-namespaces-callables.ores
 1fb80106aab7d337f6e43d05fb637726ad7f3426  examples/private-actor-sharing-invalid.ores
 dcf38829ab6de197231f8d0a513971d6abefb6fb  examples/process-gc.ores
@@ -10,7 +10,6 @@ dcf38829ab6de197231f8d0a513971d6abefb6fb  examples/process-gc.ores
 15b878a4a68b622ba3e4ee643bac3b242efaf166  examples/showcase.ores
 5e0a99b2fed11de74741e4d543886724e718d1bc  examples/together.ores
 10c82706e9c282055806bd7cacf2443c5e040a91  pom.xml
-301bc239a09755fdcb351146c3e55ce252556937  src/main/java/dev/oreslang/OresLanguage.java
 e967d6671c3adea1c47adb8ec732a3b7f6fce61e  src/main/java/dev/oreslang/ast/Ast.java
 af0fdcf8aa22cc3fcc148e79c6f8d36a1e9dad3a  src/main/java/dev/oreslang/compiler/ImportGraph.java
 14520ebada1ef7ac20b8b8412c67859a88dca2a6  src/main/java/dev/oreslang/compiler/IncrementalCompiler.java
@@ -18,6 +17,7 @@ af0fdcf8aa22cc3fcc148e79c6f8d36a1e9dad3a  src/main/java/dev/oreslang/compiler/Im
 c5963f07c8bd3e5873bda6d297e5fc397377df01  src/main/java/dev/oreslang/launcher/OresMain.java
 7edc79bef96fd6520f3ac7ee50dd4b9f82a39e46  src/main/java/dev/oreslang/nodes/OresEvalRootNode.java
 62ac55ad410d3e07d9494b73b3f658d43de70351  src/main/java/dev/oreslang/nodes/OresInteropRootNode.java
+301bc239a09755fdcb351146c3e55ce252556937  src/main/java/dev/oreslang/OresLanguage.java
 8dea6857fd5a45aca797d36c34faaf826d6c6c5d  src/main/java/dev/oreslang/parser/Lexer.java
 e669fdef4bb63be05c6cb370ec4e734903fb321f  src/main/java/dev/oreslang/parser/Parser.java
 8e40ecec35fa35497329ccea67aeb38fc46fbe6a  src/main/java/dev/oreslang/parser/Token.java
@@ -32,7 +32,7 @@ a65c0301449c24f1e97d2b7d62de357e9b2d4647  src/main/java/dev/oreslang/runtime/Ore
 14a4adf94738ac42311bb1777c576e761804d402  src/main/java/dev/oreslang/runtime/OresNull.java
 09fbf05f0b756208f41d68803b856598f0eac89a  src/main/java/dev/oreslang/runtime/RuntimeGarbageCollector.java
 aace5df3371a202682f96a0249083cf90f5aae84  src/main/java/dev/oreslang/types/OwnershipChecker.java
-b420a8a753b1506d3539218a8f7a5533a6275238  src/main/java/dev/oreslang/types/TypeChecker.java
+d8261c55055ff71d7797689f0f90c647c16b54bc  src/main/java/dev/oreslang/types/TypeChecker.java
 5f791be8515593c144d7546bfed04656da9a53cd  src/main/java/dev/oreslang/types/Types.java
 20a591ba34970babf007c781addcb0f4871c675a  src/main/java/module-info.java
 1bdcd72c08f66e1e920d88d5928590cc6770aa95  src/main/resources/META-INF/native-image/dev.oreslang/oreslang/native-image.properties
@@ -47,6 +47,7 @@ fd9081e654ccdcacadcb44fd60cbe79fb15140ea  src/test/java/dev/oreslang/GenericsAnd
 eccd8d21c7a233d134b120d465c3d1eb2f033151  src/test/java/dev/oreslang/IncrementalFunctorStaticTest.java
 267f76ae1408af3091a2c1a011007a0f26c66fd8  src/test/java/dev/oreslang/IsolationHotReloadTest.java
 bc8b58f570bacb0d7243b64429109c17c8b26026  src/test/java/dev/oreslang/LanguageHardeningTest.java
+20a158a419eb8323a2e4523f99ebbc5d7c46c464  src/test/java/dev/oreslang/launcher/CompilerCheckModeTest.java
 b8a742f091f8c856773043b493d62f2a37d5fedb  src/test/java/dev/oreslang/ModulesNamespacesCallableSemanticsTest.java
 4e26a199381facdbd3fa99a2efca4b1e9170ba3a  src/test/java/dev/oreslang/MutexLanguageTest.java
 97d0ccb8b33a2906fb44866fde1fa7e6cde8e58e  src/test/java/dev/oreslang/MutexRuntimeTest.java
@@ -57,10 +58,10 @@ b8a742f091f8c856773043b493d62f2a37d5fedb  src/test/java/dev/oreslang/ModulesName
 e55d49a3ece6656ecf32e2a1347d010e87c60ac1  src/test/java/dev/oreslang/PolyglotFeatureTest.java
 9a69d821725711eed4930c295ded8c635550c043  src/test/java/dev/oreslang/PolyglotSmokeTest.java
 1b6bb7a6592fd52bf21dbc2afb2712355baab2a0  src/test/java/dev/oreslang/PrivateActorIsolationTest.java
+062495b15f36d602f43d9f7e129662f6eb4d5a81  src/test/java/dev/oreslang/ReservedKeywordsDynamicStructTest.java
 9eff8c3f587ee308927f076808c69286d994b456  src/test/java/dev/oreslang/ReturnedDestructuringTest.java
 0d320a8603164372392c408af601c718e1773738  src/test/java/dev/oreslang/RoutineAndLoopTest.java
-685ca6528b5fa0a39ac08f7fbe6bdfefbcc1ff8b  src/test/java/dev/oreslang/SharedPrivateActorIsolationProofTest.java
-20a158a419eb8323a2e4523f99ebbc5d7c46c464  src/test/java/dev/oreslang/launcher/CompilerCheckModeTest.java
 36c3d9cb6cbc65cb468ee3aec26c26aaf55656f2  src/test/java/dev/oreslang/runtime/ActorCapabilityIsolationTest.java
 5ab58e5e623f5fac83b5ea2555a7cd19927bf837  src/test/java/dev/oreslang/runtime/RuntimeGarbageCollectorTest.java
 e5f2904633172d72b9f9fd4c10699740e2c72d14  src/test/java/dev/oreslang/runtime/SharedMutexPublicationTest.java
+685ca6528b5fa0a39ac08f7fbe6bdfefbcc1ff8b  src/test/java/dev/oreslang/SharedPrivateActorIsolationProofTest.java
