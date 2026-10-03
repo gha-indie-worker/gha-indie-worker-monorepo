@@ -352,7 +352,20 @@ public final class Ast {
         public TupleExpr { elements = List.copyOf(elements); }
     }
 
-    public record ObjectField(String name, Expr value) { }
+    public record ObjectField(String name, Expr dynamicName, Expr value) {
+        public ObjectField {
+            if ((name == null) == (dynamicName == null)) {
+                throw new IllegalArgumentException("object field must have exactly one static or dynamic key");
+            }
+        }
+        public static ObjectField named(String name, Expr value) {
+            return new ObjectField(java.util.Objects.requireNonNull(name, "name"), null, value);
+        }
+        public static ObjectField dynamic(Expr key, Expr value) {
+            return new ObjectField(null, java.util.Objects.requireNonNull(key, "key"), value);
+        }
+        public boolean isDynamic() { return dynamicName != null; }
+    }
 
     public record ObjectExpr(List<ObjectField> fields) implements Expr {
         public ObjectExpr { fields = List.copyOf(fields); }
