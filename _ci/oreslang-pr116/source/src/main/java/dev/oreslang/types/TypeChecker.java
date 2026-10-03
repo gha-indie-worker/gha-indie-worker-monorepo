@@ -521,10 +521,15 @@ public final class TypeChecker {
             } else if (assignment.target() instanceof Ast.IndexExpr indexed) {
                 Type receiver = deref(typeOf(indexed.receiver(), env, generics, self));
                 Type index = typeOf(indexed.index(), env, generics, self);
-                requireAssignable(index, Primitive.INT, "array/list index");
-                if (receiver instanceof ListType list) targetType = list.element();
-                else if (receiver instanceof Tuple tuple) targetType = tuple.elements().stream().reduce(Unknown.INSTANCE, this::commonType);
-                else throw new IllegalArgumentException("indexed assignment requires an array/list or tuple");
+                if (receiver instanceof Named dynamic && dynamic.name().equals("DynamicStruct")) {
+                    requireAssignable(index, Primitive.STRING, "DynamicStruct key");
+                    targetType = dynamic.arguments().getFirst();
+                } else {
+                    requireAssignable(index, Primitive.INT, "array/list index");
+                    if (receiver instanceof ListType list) targetType = list.element();
+                    else if (receiver instanceof Tuple tuple) targetType = tuple.elements().stream().reduce(Unknown.INSTANCE, this::commonType);
+                    else throw new IllegalArgumentException("indexed assignment requires an array/list, tuple, or DynamicStruct");
+                }
                 where = "index";
             } else throw new IllegalArgumentException("unsupported assignment target");
             Type value = typeOf(assignment.value(), env, generics, self);
@@ -800,6 +805,9 @@ public final class TypeChecker {
                 if (result == null) throw new IllegalArgumentException("unknown structural member '" + member.member() + "'");
                 return result;
             }
+            if (receiver instanceof Named dynamic && dynamic.name().equals("DynamicStruct")) {
+                return dynamic.arguments().getFirst();
+            }
             if (receiver instanceof Named named) {
                 Ast.ClassDecl klass = findClass(named.name());
                 if (klass != null) {
@@ -831,12 +839,23 @@ public final class TypeChecker {
         if (expr instanceof Ast.IndexExpr indexed) {
             Type receiver = deref(typeOf(indexed.receiver(), env, generics, self));
             Type index = typeOf(indexed.index(), env, generics, self);
+            if (receiver instanceof Named dynamic && dynamic.name().equals("DynamicStruct")) {
+                requireAssignable(index, Primitive.STRING, "DynamicStruct key");
+                return dynamic.arguments().getFirst();
+            }
             requireAssignable(index, Primitive.INT, "array/list index");
             if (receiver instanceof ListType list) return list.element();
             if (receiver instanceof Tuple tuple) return tuple.elements().stream().reduce(Unknown.INSTANCE, this::commonType);
-            throw new IllegalArgumentException("indexing requires an array/list or tuple");
+            throw new IllegalArgumentException("indexing requires an array/list, tuple, or DynamicStruct");
         }
         if (expr instanceof Ast.NewExpr created) {
+            if (created.type().name().equals("DynamicStruct")) {
+                Type dynamic = resolve(created.type(), generics, self);
+                if (!created.arguments().isEmpty()) {
+                    throw new IllegalArgumentException("DynamicStruct<T> constructor takes no positional arguments");
+                }
+                return dynamic;
+            }
             Ast.ClassDecl klass = findClass(created.type().name());
             if (klass == null) return resolve(created.type(), generics, self);
             if (klass.actorKind() != Ast.ActorKind.NONE) {
@@ -892,10 +911,20 @@ public final class TypeChecker {
         }
         if (expr instanceof Ast.ObjectExpr object) {
             Map<String, Type> members = new LinkedHashMap<>();
+            boolean dynamicKeys = false;
+            Type dynamicValue = null;
             for (Ast.ObjectField field : object.fields()) {
-                if (members.putIfAbsent(field.name(), typeOf(field.value(), env, generics, self)) != null) {
+                Type valueType = widenCollectionElement(typeOf(field.value(), env, generics, self));
+                dynamicValue = dynamicValue == null ? valueType : collectionElementJoin(dynamicValue, valueType);
+                if (field.isDynamic()) {
+                    dynamicKeys = true;
+                    requireAssignable(typeOf(field.dynamicName(), env, generics, self), Primitive.STRING, "dynamic obj key");
+                } else if (members.putIfAbsent(field.name(), valueType) != null) {
                     throw new IllegalArgumentException("duplicate obj field '" + field.name() + "'");
                 }
+            }
+            if (dynamicKeys) {
+                return new Named("DynamicStruct", List.of(dynamicValue == null ? Unknown.INSTANCE : dynamicValue));
             }
             return new Record(members);
         }
@@ -1048,6 +1077,9 @@ public final class TypeChecker {
             if (result == null) throw new IllegalArgumentException("unknown structural member '" + member.member() + "'");
             return result;
         }
+        if (receiver instanceof Named dynamic && dynamic.name().equals("DynamicStruct")) {
+            return dynamic.arguments().getFirst();
+        }
         if (receiver instanceof Named named) {
             Ast.ClassDecl klass = findClass(named.name());
             if (klass != null) {
@@ -1105,6 +1137,13 @@ public final class TypeChecker {
         if (named.name().equals("Mutex") || named.name().equals("MutexGuard") || named.name().equals("Future")) {
             throw new IllegalArgumentException(
                     where + " cannot use " + named.name() + " across an actor boundary");
+        }
+        if (named.name().equals("DynamicStruct")) {
+            if (named.arguments().size() != 1) {
+                throw new IllegalArgumentException(where + " requires DynamicStruct<T> with one value type");
+            }
+            validateActorCallableBoundaryType(named.arguments().getFirst(), actorKind, false, where + " value");
+            return;
         }
         if (named.name().equals("SharedMutex")) {
             if (actorKind == Ast.ActorKind.PRIVATE) {
@@ -1173,6 +1212,10 @@ public final class TypeChecker {
 
         if (named.name().equals("Mutex") || named.name().equals("MutexGuard")
                 || named.name().equals("Future") || named.name().equals("SharedMutex")) return false;
+        if (named.name().equals("DynamicStruct")) {
+            return named.arguments().size() == 1
+                    && isSharedSafe(named.arguments().getFirst(), seen, genericBindings);
+        }
         if (named.name().equals("OptionUnwrapError")) return named.arguments().isEmpty();
         if (named.name().equals("Option")) {
             return named.arguments().size() == 1 && isSharedSafe(named.arguments().getFirst(), seen, genericBindings);
@@ -2070,6 +2113,14 @@ public final class TypeChecker {
             case "Array", "List" -> {
                 if (!ref.inferArguments() && ref.arguments().size() != 1) throw new IllegalArgumentException(ref.name() + " requires exactly one type argument");
                 yield new ListType(ref.arguments().isEmpty() ? Unknown.INSTANCE : resolve(ref.arguments().getFirst(), generics, self));
+            }
+            case "DynamicStruct" -> {
+                if (ref.inferArguments() || ref.arguments().size() != 1) {
+                    throw new IllegalArgumentException("DynamicStruct requires exactly one explicit value type");
+                }
+                Type value = resolve(ref.arguments().getFirst(), generics, self);
+                if (value == Primitive.VOID) throw new IllegalArgumentException("DynamicStruct<void> is invalid");
+                yield new Named("DynamicStruct", List.of(value));
             }
             case "Option" -> {
                 if (ref.inferArguments() || ref.arguments().size() != 1) throw new IllegalArgumentException("Option requires exactly one explicit type argument");
