@@ -1,4 +1,4 @@
-name: oreslang-pr116-keyword-validation
+name: oreslang-pr119-dynamic-struct-validation
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - name: Verify exact PR116 source mirror
+      - name: Verify exact PR119 source mirror
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -30,8 +30,8 @@ jobs:
               exit 1
             }
           done < ../SOURCE_BLOBS.sha
-          test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 66
-      - name: Verify exact PR116 base mirror
+          test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 67
+      - name: Verify exact PR119 base mirror
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -44,13 +44,13 @@ jobs:
             }
           done < ../BASE_BLOBS.sha
           test "$(wc -l < ../BASE_BLOBS.sha)" -eq 66
-      - name: Run focused parser keyword tests
+      - name: Run focused reserved-keyword and DynamicStruct tests
         working-directory: _ci/oreslang-pr116/source
-        run: mvn -B -ntp -Dtest=ParserTest,RoutineAndLoopTest test
+        run: mvn -B -ntp -Dtest=ReservedKeywordsDynamicStructTest,ParserTest,RoutineAndLoopTest test
       - name: Run verification excluding known baseline actor-capability failures
         working-directory: _ci/oreslang-pr116/source
         run: mvn -B -ntp -Dtest='*,!ActorCapabilityIsolationTest' verify
-      - name: Prove actor-capability failures predate PR116
+      - name: Prove actor-capability failures predate PR119
         shell: bash
         run: |
           set -Eeuo pipefail
