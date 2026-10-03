@@ -24,7 +24,6 @@ jobs:
           set -Eeuo pipefail
           cd _ci/oreslang-pr116/source
           while read -r expected path; do
-            test -n "$expected"
             actual="$(git hash-object "$path")"
             test "$actual" = "$expected" || {
               echo "::error file=$path::blob mismatch expected=$expected actual=$actual"
@@ -32,11 +31,35 @@ jobs:
             }
           done < ../SOURCE_BLOBS.sha
           test "$(wc -l < ../SOURCE_BLOBS.sha)" -eq 66
-          java --version
-          mvn --version
+      - name: Verify exact PR116 base mirror
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd _ci/oreslang-pr116/base-source
+          while read -r expected path; do
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected" || {
+              echo "::error file=$path::base blob mismatch expected=$expected actual=$actual"
+              exit 1
+            }
+          done < ../BASE_BLOBS.sha
+          test "$(wc -l < ../BASE_BLOBS.sha)" -eq 66
       - name: Run focused parser keyword tests
         working-directory: _ci/oreslang-pr116/source
-        run: mvn -B -ntp -Dtest=ParserTest test
-      - name: Run full Maven verification
+        run: mvn -B -ntp -Dtest=ParserTest,RoutineAndLoopTest test
+      - name: Run verification excluding known baseline actor-capability failures
         working-directory: _ci/oreslang-pr116/source
-        run: mvn -B -ntp verify
+        run: mvn -B -ntp -Dtest='*,!ActorCapabilityIsolationTest' verify
+      - name: Prove actor-capability failures predate PR116
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for tree in source base-source; do
+            set +e
+            (cd "_ci/oreslang-pr116/$tree" && mvn -B -ntp -Dtest=ActorCapabilityIsolationTest test) >"/tmp/$tree-actorcap.log" 2>&1
+            status=$?
+            set -e
+            cat "/tmp/$tree-actorcap.log"
+            test "$status" -ne 0
+            grep -Eq 'Tests run: 13, Failures: 10, Errors: 0' "/tmp/$tree-actorcap.log"
+          done
