@@ -132,11 +132,14 @@ public final class IncrementalCompiler {
     }
 
     private static String abiDigest(Ast.Program program) {
-        StringBuilder abi = new StringBuilder("ores-abi-v2\n");
+        StringBuilder abi = new StringBuilder("ores-abi-v3\n");
         abi.append("namespace=").append(program.namespace() == null ? "" : program.namespace()).append('\n');
 
         for (Ast.ModuleDecl module : program.modules()) {
             abi.append("module ").append(module.name()).append('\n');
+            for (Ast.TypeRef contract : module.contracts()) {
+                abi.append(" module-contract ").append(typeRef(contract)).append('\n');
+            }
             for (Ast.Annotation annotation : module.annotations()) {
                 if (annotation.name().equals("AdheresTo")) {
                     abi.append(" module-annotation AdheresTo:");
@@ -170,6 +173,10 @@ public final class IncrementalCompiler {
             for (Ast.TypeRef parent : klass.parents()) abi.append(typeRef(parent)).append(',');
             abi.append(" implements ");
             for (Ast.TypeRef iface : klass.interfaces()) abi.append(typeRef(iface)).append(',');
+            abi.append(" implements-static ");
+            for (Ast.TypeRef contract : klass.staticContracts()) {
+                abi.append(typeRef(contract)).append(',');
+            }
             abi.append('\n');
             if (klass.constructor() != null
                     && klass.constructor().visibility() == Ast.Visibility.PUBLIC) {
@@ -181,6 +188,7 @@ public final class IncrementalCompiler {
                 // their class is public; all positional field slots affect ABI.
                 abi.append(" synthesized-constructor(");
                 for (Ast.FieldDecl field : klass.fields()) {
+                    if (field.isStatic()) continue;
                     abi.append(field.type() == null
                             ? "<inferred:" + field.initializer() + ">"
                             : typeRef(field.type())).append(',');
@@ -196,7 +204,8 @@ public final class IncrementalCompiler {
                             .append(':').append(field.type() == null ? "<inferred>" : typeRef(field.type())).append('\n');
                 }
                 if (field.visibility() != Ast.Visibility.PUBLIC) continue;
-                abi.append(" field ").append(field.bindingKind()).append(' ')
+                abi.append(field.isStatic() ? " static-field " : " field ")
+                        .append(field.bindingKind()).append(' ')
                         .append(field.type() == null ? "<inferred:" + field.initializer() + ">" : typeRef(field.type()))
                         .append(' ').append(field.name()).append('\n');
             }
@@ -209,7 +218,10 @@ public final class IncrementalCompiler {
             return;
         }
         if (decl instanceof Ast.InterfaceDecl iface) {
-            abi.append("interface ").append(iface.visibility()).append(' ').append(iface.name());
+            abi.append(iface.staticContract()
+                            ? "static-contract "
+                            : iface.moduleContract() ? "contract " : "interface ")
+                    .append(iface.visibility()).append(' ').append(iface.name());
             appendGenerics(abi, iface.genericParameters());
             abi.append(" extends ");
             for (Ast.TypeRef parent : iface.parents()) abi.append(typeRef(parent)).append(',');
@@ -219,7 +231,14 @@ public final class IncrementalCompiler {
                 if (member instanceof Ast.InterfaceFunctionDecl fn) {
                     memberEntries.add(interfaceFunctionAbi(fn));
                 } else if (member instanceof Ast.InterfaceFieldDecl field) {
-                    memberEntries.add(" iface-field " + field.name() + ":" + typeRef(field.type()) + "\n");
+                    String binding = iface.moduleContract()
+                            ? (field.bindingKind() == null
+                                    ? "readable "
+                                    : field.bindingKind().name().toLowerCase() + " ")
+                            : "";
+                    memberEntries.add(
+                            " iface-field " + binding + field.name() + ":"
+                                    + typeRef(field.type()) + "\n");
                 }
             }
             memberEntries.stream().sorted().forEach(abi::append);
