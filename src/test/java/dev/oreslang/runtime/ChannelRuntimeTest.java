@@ -239,6 +239,67 @@ final class ChannelRuntimeTest {
                 mapSet.selectAsync(ChannelRuntime.SelectPolicy.PRIORITY).join().index());
     }
 
+
+    @Test
+    void selectPlanReusesDescriptorsButCreatesIndependentOperations() {
+        ChannelRuntime.Channel<String> channel = new ChannelRuntime.Channel<>(1);
+        ChannelRuntime.SelectPlan plan = ChannelRuntime.SelectPlan.of(
+                ChannelRuntime.read(channel));
+
+        channel.tryWrite("first");
+        ChannelRuntime.SelectResult first = plan.selectAsync().join();
+        assertEquals("first", first.value());
+
+        OresFuture<ChannelRuntime.SelectResult> second = plan.selectAsync();
+        assertFalse(second.isDone());
+        assertTrue(second.cancel(false));
+
+        channel.tryWrite("second");
+        assertThrows(CancellationException.class, second::join);
+        assertEquals("second", channel.tryRead().orElseThrow());
+    }
+
+    @Test
+    void selectPlanPreservesFairRotationAcrossRepeatedExecutions() {
+        ChannelRuntime.Channel<String> first = new ChannelRuntime.Channel<>(1);
+        ChannelRuntime.Channel<String> second = new ChannelRuntime.Channel<>(1);
+        ChannelRuntime.SelectPlan plan = ChannelRuntime.SelectPlan.of(
+                ChannelRuntime.read(first),
+                ChannelRuntime.read(second));
+
+        first.tryWrite("a1");
+        second.tryWrite("b1");
+        assertEquals(0, plan.selectAsync(ChannelRuntime.SelectPolicy.FAIR).join().index());
+
+        first.tryWrite("a2");
+        assertEquals(1, plan.selectAsync(ChannelRuntime.SelectPolicy.FAIR).join().index());
+    }
+
+    @Test
+    void selectPlanCanBeAssembledDynamicallyWithoutChangingSelectSetPath() {
+        ChannelRuntime.Channel<String> first = new ChannelRuntime.Channel<>(1);
+        ChannelRuntime.Channel<String> second = new ChannelRuntime.Channel<>(1);
+        second.tryWrite("ready");
+
+        java.util.ArrayList<ChannelRuntime.SelectCase> dynamicCases =
+                new java.util.ArrayList<>();
+        dynamicCases.add(ChannelRuntime.read(first));
+        dynamicCases.add(ChannelRuntime.read(second));
+
+        ChannelRuntime.SelectPlan plan = ChannelRuntime.SelectPlan.from(dynamicCases);
+        assertEquals(
+                1,
+                plan.trySelect(ChannelRuntime.SelectPolicy.PRIORITY)
+                        .orElseThrow()
+                        .index());
+
+        // The original SelectSet API remains independently usable.
+        first.tryWrite("legacy");
+        ChannelRuntime.SelectSet original = ChannelRuntime.SelectSet.of(
+                ChannelRuntime.read(first));
+        assertEquals("legacy", original.selectAsync().join().value());
+    }
+
     @Test
     void immediateWriteRendezvousWithPendingSelectRead() {
         ChannelRuntime.Channel<String> channel = new ChannelRuntime.Channel<>(0);
