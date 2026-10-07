@@ -206,17 +206,20 @@ switch_default  = "default" "->" block ;
 
 try_stmt        = "try" block "catch" "(" IDENT ")" block [ "finally" block ] ;
 
-select_stmt     = [ select_wait_mode ] "select" [ select_policy ]
+select_stmt     = ( "do" [ "nb" ] | [ select_wait_mode ] )
+                  "select" [ select_policy ]
                   "{" select_arm { select_arm } [ select_default ] "}" ;
 select_wait_mode= "nb" | "try" ;
 select_policy   = "first" | "fair" | "random" ;
-select_arm      = "case" "readch" expression ":"
+select_arm      = select_arm_keyword "readch" expression ":"
                   [ binding_kind IDENT ] { statement }
-                | "case" "writech" expression "," expression ":"
+                | select_arm_keyword "writech" expression "," expression ":"
                   { statement } ;
+select_arm_keyword = "when" | "case" ; (* "when" is canonical; "case" is accepted for compatibility. *)
+(* "when" and "case" are contextual keywords: outside these grammar positions they are ordinary IDENT names. *)
 select_default  = "default" ":" { statement } ;
 
-(* In select_arm/select_default bodies, the next case/default or the closing
+(* In select_arm/select_default bodies, the next when/case/default or the closing
    brace is a structural arm boundary and is not consumed as a nested
    statement. At most one default arm is permitted. *)
 
@@ -369,7 +372,12 @@ member_terminator = ";" | INTERFACE_CLOSING_BOUNDARY ;
    Semantic restrictions:
    - Channel/select waiting has three distinct modes. Plain readch/writech/select
      is suspending; nb registers and returns a Future/arms a detached static
-     select continuation; try probes once without leaving a waiter. Static
+     select continuation; try probes once without leaving a waiter. "do select"
+     and "do nb select" mark static, no-result dispatch explicitly; dynamic
+     "select from" remains an Option-valued expression, and dynamic "nb select
+     from" remains Future<Option<SelectResult>>. "cb select" and "nb cb select"
+     are rejected; nb cb writech retains its separate literal callback syntax.
+     Static
      select defaults to deterministic fair rotation. "select first" is strict
      lexical priority and "select random" is explicit opt-in randomness.
      Static nb-select arms are detached void continuation scopes: return exits
