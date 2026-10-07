@@ -65,10 +65,12 @@ actor_method_decl
 
 class_decl      = visibility "define" [ "abstract" ] "class" IDENT [ generic_params ]
                   [ "extends" type_ref { "," type_ref } ]
-                  [ ( "implements" | "impl" ) type_ref { "," type_ref } ]
+                  [ ( "implements" | "impl" ) implemented_type { "," implemented_type } ]
                   "as" { class_member } "end" ;
 
-class_member    = field_decl
+implemented_type= [ "static" ] type_ref ;
+
+class_member    = class_field_decl
                 | constructor_decl
                 | method_decl
                 | static_function_decl ;
@@ -77,10 +79,14 @@ constructor_decl
                 = { annotation } visibility "constructor"
                   "(" [ param_list ] ")" block ;
 
-field_decl      = { annotation } visibility
-                  ( binding_kind type_ref IDENT [ "=" expression ]
-                  | IDENT ":" type_ref [ "=" expression ] )
-                  stmt_terminator ;
+field_decl      = { annotation } visibility data_member_decl stmt_terminator ;
+class_field_decl= { annotation } visibility [ "static" ] data_member_decl stmt_terminator ;
+data_member_decl= binding_kind
+                    ( type_ref IDENT
+                    | IDENT ":" type_ref
+                    | IDENT )
+                    [ "=" expression ]
+                | IDENT ":" type_ref [ "=" expression ] ;
 
 method_decl     = { annotation } visibility { method_modifier } method_name [ generic_params ]
                   method_head return_spec ( block | stmt_terminator ) ;
@@ -93,7 +99,7 @@ static_function_decl
                 = { annotation } visibility "static" { "async" | "structural" } "fnc" callable_name [ generic_params ]
                   "(" [ param_list ] ")" return_spec block ;
 
-contract_decl   = "define" "contract" IDENT [ generic_params ]
+contract_decl   = visibility "define" [ "static" ] "contract" IDENT [ generic_params ]
                   [ "extends" type_ref { "," type_ref } ] interface_body ;
 
 interface_decl  = visibility "interface" IDENT [ generic_params ]
@@ -107,7 +113,7 @@ interface_body  = "{" { interface_member } "}"
                 | { interface_member } "end" ;
 
 interface_member= { annotation } [ "structural" ] "fnc" IDENT [ generic_params ] "(" [ param_list ] ")" type_return_spec member_terminator
-                | IDENT ":" type_ref member_terminator
+                | [ binding_kind ] IDENT ":" type_ref member_terminator
                 | [ binding_kind ] type_ref IDENT member_terminator ;
 
 type_decl       = "type" IDENT [ generic_params ] "=" type_ref stmt_terminator ;
@@ -216,7 +222,6 @@ select_arm      = select_arm_keyword "readch" expression ":"
                 | select_arm_keyword "writech" expression "," expression ":"
                   { statement } ;
 select_arm_keyword = "when" | "case" ; (* "when" is canonical; "case" is accepted for compatibility. *)
-(* "when" and "case" are contextual keywords: outside these grammar positions they are ordinary IDENT names. *)
 select_default  = "default" ":" { statement } ;
 
 (* In select_arm/select_default bodies, the next when/case/default or the closing
