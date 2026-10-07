@@ -80,7 +80,7 @@ final class ImportSelectorSyntaxTest {
                   pub fnc value(): int { return 2; }
                 }
 
-                define class Box as
+                pub define class Box as
                 end
 
                 pub interface Api {
@@ -126,6 +126,34 @@ final class ImportSelectorSyntaxTest {
                 import class Box from './models';
 
                 pub routine main(): void { return; }
+                """);
+
+        LinkedProgramRunner.validate(main);
+    }
+
+    @Test
+    void publicFileRootClassCanBeImportedWithoutSyntheticModule() throws Exception {
+        Path child = temp.resolve("models.ores");
+        Path main = temp.resolve("main.ores");
+
+        Files.writeString(child, """
+                pub define class Box as
+                  pub let int value = 7;
+
+                  pub constructor() {
+                    return;
+                  }
+                end
+                """);
+
+        Files.writeString(main, """
+                import class Box from './models';
+
+                pub routine main(): void {
+                  val Box box = new Box();
+                  stdio.println(box.value);
+                  return;
+                }
                 """);
 
         LinkedProgramRunner.validate(main);
