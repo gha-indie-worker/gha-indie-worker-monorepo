@@ -1,8 +1,8 @@
 # Reserved `pure` keyword and effect contract
 
-Status: **draft design / compiler contract**
+Status: **draft design / partial compiler implementation**
 
-This document specifies the proposed reserved `pure` keyword for Oreslang. The first implementation target is named `fnc` and `routine` declarations. The keyword is a compiler-enforced semantic contract, not documentation and not an optimizer hint.
+This document specifies the reserved `pure` keyword for Oreslang. The current implementation covers named `fnc`/`routine` declarations and explicit RHS function expressions. The keyword is a compiler-enforced semantic contract, not documentation and not an optimizer hint.
 
 This design is intentionally built on an internal effect system so Oreslang can add richer effect declarations later without weakening or redesigning `pure`.
 
@@ -65,15 +65,7 @@ The canonical named-callable modifier order is:
 [visibility] pure [nlex] routine ...
 ```
 
-Class-level static functions use the existing class-static position:
-
-```ores
-define class Math as
-  pub static pure fnc twice(int value): int {
-    return value * 2;
-  }
-end
-```
+Class/actor member callables do not yet carry `pure` effect metadata. The parser therefore rejects `pure` on instance methods and `static fnc` members instead of silently discarding the modifier.
 
 Lambda-style named declarations, where accepted by the callable grammar, carry the same contract:
 
@@ -85,11 +77,23 @@ pub pure routine normalize = || -> void {
 
 `fnc` retains its existing recursive semantics. `routine` retains its existing prohibition on direct or indirect recursive cycles. Purity is orthogonal to recursion. `nlex` is compatible with `pure`; it adds the stronger no-activation-capture rule but does not replace effect checking.
 
-V1 deliberately rejects `pure async fnc`, `pure async routine`, and `pure actor fnc`. Async/future completion and actor execution are scheduler/effect boundaries. A synchronous pure helper may be called freely from async or actor code.
+The current compiler permits `pure async fnc` / `pure async routine` only when every awaited operation is itself statically proven pure; unknown or impure awaited calls fail closed. `pure actor fnc` remains rejected. `pure trap async` is also rejected until the trap boundary can span every await suspension.
 
 The first implementation does not require public syntax for `pure` instance methods. The compiler must still infer method effects so calls from a pure callable cannot escape through an impure method. A later language revision may expose `pure` on methods/interfaces once method effect contracts are specified.
 
-Other callable modifiers such as the separately designed `trap` modifier may compose with `pure` only when their control-flow semantics preserve the effect contract. Modifier composition is checked semantically, not accepted merely because the parser can order the words.
+Other callable modifiers such as `trap` and `nlex` compose orthogonally with `pure` on supported callables. The parser accepts equivalent modifier orderings, while semantic checks still enforce each guarantee independently. RHS examples include:
+
+```ores
+val normalize = pure |int value| -> int {
+  return value < 0 ? -value : value;
+};
+
+val guarded = pure trap nlex || -> int {
+  return 42;
+};
+```
+
+`trap` adds exactly one `Option<T>` layer to the public callable result; `nlex` adds a capture/declaration-resolution boundary. Neither weakens the purity check.
 
 `pure` is not a callable-only compatibility keyword. It cannot be used as an ordinary identifier, parameter, binding, type, class, module, field, bare callable reference name, or unquoted object key.
 
@@ -655,8 +659,8 @@ Purity decisions based only on syntax are insufficient. Unsupported provenance f
 
 - use `pure` as an identifier;
 - `pure actor fnc`;
-- `pure async fnc` / `pure async routine` in v1;
-- `await` / future completion / cancellation observation in pure v1;
+- `pure async fnc` / `pure async routine` whose awaited dependency is impure or effect-unknown;
+- explicit observation of scheduler/future cancellation state from pure code;
 - stdout/stderr/stdin;
 - file/network/database/socket I/O;
 - environment variable read;

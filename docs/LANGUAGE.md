@@ -709,7 +709,7 @@ Owned sum values cannot hide lexical borrows until explicit lifetime parameters 
 
 Panics are distinct from ordinary recoverable errors. Normal `try/catch` does not swallow an unwrap panic, while lexical cleanup and `finally` still execute during unwind. Use `unwrap_safe()`, matching, or explicit variant inspection when absence/failure should remain data.
 
-`Option<null>` is accepted only as an explicit type-level escape hatch when an interoperability boundary truly needs to preserve a null marker. The `null` marker cannot escape that direct `Option<null>` position. `Option<void>` is invalid; use `void` when a function returns no value.
+`Option<null>` is accepted only as an explicit type-level escape hatch when an interoperability boundary truly needs to preserve a null marker. The `null` marker cannot escape that direct `Option<null>` position. `Option<void>` is valid as a completion envelope, notably for `trap fnc ...: void`; it can be spelled to annotate a trapped-void result and inspected with `is_some()` / `is_none()`, but unwrapping it produces no useful payload.
 
 ## Numbers
 

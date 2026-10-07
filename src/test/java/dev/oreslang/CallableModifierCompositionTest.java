@@ -4,6 +4,7 @@ import dev.oreslang.OresLanguage;
 import dev.oreslang.ast.Ast;
 import dev.oreslang.compiler.OresCompiler;
 import dev.oreslang.parser.Parser;
+import dev.oreslang.types.PureEffectChecker;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.junit.jupiter.api.Test;
@@ -115,29 +116,70 @@ final class CallableModifierCompositionTest {
     }
 
     @Test
-    void rhsPureTrapNlexModifiersComposeInEveryOrder() {
-        for (List<String> order : permutations("pure", "trap", "nlex")) {
-            String modifiers = String.join(" ", order);
-            Ast.Program program = Parser.parse("""
-                    fnc make(): void {
-                      const Fnc<int, Option<int>> guarded = %s |int value| -> int {
-                        return value + 1;
-                      };
-                      val Option<int> answer = guarded(41);
-                      return;
-                    }
-                    """.formatted(modifiers));
+    void rhsEffectModifiersComposeInEverySupportedCombinationAndOrder() {
+        List<List<String>> effectSets = List.of(
+                List.of("pure"),
+                List.of("trap"),
+                List.of("nlex"),
+                List.of("pure", "trap"),
+                List.of("pure", "nlex"),
+                List.of("trap", "nlex"),
+                List.of("pure", "trap", "nlex"));
 
-            Ast.FunctionDecl fn =
-                    (Ast.FunctionDecl) program.modules().getFirst().declarations().getFirst();
-            Ast.LambdaExpr lambda =
-                    (Ast.LambdaExpr) ((Ast.BindingStmt) fn.body().getFirst()).initializer();
-            assertTrue(lambda.pure(), modifiers);
-            assertTrue(lambda.trapped(), modifiers);
-            assertTrue(lambda.nonLexical(), modifiers);
+        int cases = 0;
+        for (List<String> effects : effectSets) {
+            for (List<String> order : permutations(effects.toArray(String[]::new))) {
+                cases++;
+                String modifiers = String.join(" ", order);
+                Ast.Program program = Parser.parse("""
+                        fnc make(): void {
+                          const guarded = %s |int value| -> int {
+                            return value + 1;
+                          };
+                          return;
+                        }
+                        """.formatted(modifiers));
 
-            assertDoesNotThrow(() -> OresCompiler.analyze(program), modifiers);
+                Ast.FunctionDecl fn =
+                        (Ast.FunctionDecl) program.modules().getFirst().declarations().getFirst();
+                Ast.LambdaExpr lambda =
+                        (Ast.LambdaExpr) ((Ast.BindingStmt) fn.body().getFirst()).initializer();
+                assertEquals(effects.contains("pure"), lambda.pure(), modifiers);
+                assertEquals(effects.contains("trap"), lambda.trapped(), modifiers);
+                assertEquals(effects.contains("nlex"), lambda.nonLexical(), modifiers);
+
+                assertDoesNotThrow(() -> OresCompiler.analyze(program), modifiers);
+            }
         }
+
+        assertEquals(15, cases);
+    }
+
+    @Test
+    void trapCannotBeSilentlyDiscardedOnNonCallableDeclarations() {
+        assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                trap interface Api {
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                trap contract Api {
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                define class Box as
+                  trap constructor() {
+                    return;
+                  }
+                end
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                actor Worker {
+                  trap val int state = 1;
+                }
+                """));
     }
 
     @Test
@@ -151,6 +193,20 @@ final class CallableModifierCompositionTest {
                   val int a = c();
                   val Option<int> b = v();
                   val int d = n();
+                  return;
+                }
+                """));
+    }
+
+    @Test
+    void lambdaStyleNamedDeclarationsPreserveCallableEffectsAndTrapResult() {
+        assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
+                pure trap nlex fnc guarded = |int value| -> int {
+                  return value + 1;
+                }
+
+                fnc use(): void {
+                  val Option<int> result = guarded(41);
                   return;
                 }
                 """));
@@ -257,6 +313,12 @@ final class CallableModifierCompositionTest {
                     """.formatted(duplicate + " " + duplicate)));
 
             assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                    %s fnc %s bad(): int {
+                      return 1;
+                    }
+                    """.formatted(duplicate, duplicate)));
+
+            assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
                     fnc bad(): void {
                       const f = %s || -> int {
                         return 1;
@@ -265,6 +327,115 @@ final class CallableModifierCompositionTest {
                     }
                     """.formatted(duplicate + " " + duplicate)));
         }
+    }
+
+    @Test
+    void pureRejectsAmbientRuntimeBindingsButAllowsCompileTimeConstants() {
+        assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
+                const FIXED = 7;
+
+                pure fnc read_fixed(): int {
+                  return FIXED;
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                val runtime_value = 7;
+
+                pure fnc read_runtime(): int {
+                  return runtime_value;
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                let mutable_global = 7;
+
+                pure fnc read_runtime(): int {
+                  return mutable_global;
+                }
+                """));
+    }
+
+    @Test
+    void pureFunctionExpressionsAllowImmutableCapturesButRejectMutableCaptures() {
+        assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
+                fnc use(int multiplier): int {
+                  val factor = multiplier;
+                  val multiply = pure |int value| -> int {
+                    return value * factor;
+                  };
+                  return multiply(2);
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                fnc use(int multiplier): int {
+                  let factor = multiplier;
+                  val multiply = pure |int value| -> int {
+                    return value * factor;
+                  };
+                  return multiply(2);
+                }
+                """));
+    }
+
+    @Test
+    void pureMayCarryImpureFunctionValuesWithoutInvokingThem() {
+        assertDoesNotThrow(() -> PureEffectChecker.check(Parser.parse("""
+                fnc impure(): int {
+                  stdio.stdout.write("effect");
+                  return 2;
+                }
+
+                pure fnc carry(): void {
+                  val callback = impure;
+                  return;
+                }
+                """)));
+    }
+
+    @Test
+    void pureCallableProvenanceCannotBeLaunderedThroughLetReassignment() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> PureEffectChecker.check(Parser.parse("""
+                        fnc impure(): int {
+                          stdio.stdout.write("effect");
+                          return 2;
+                        }
+
+                        pure fnc bad(): int {
+                          let Fnc<int> callback = pure || -> int {
+                            return 1;
+                          };
+                          callback = impure;
+                          return callback();
+                        }
+                        """)));
+
+        assertTrue(
+                error.getMessage().contains("unproven-effect")
+                        || error.getMessage().contains("statically proven pure"),
+                error.getMessage());
+    }
+
+    @Test
+    void pureAliasProvenanceCannotBeLaunderedThroughLetReassignment() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> PureEffectChecker.check(Parser.parse("""
+                        pure fnc bad(List<int> values): void {
+                          let local = [1];
+                          local = values;
+                          local[0] = 2;
+                          return;
+                        }
+                        """)));
+
+        assertTrue(
+                error.getMessage().contains("state reachable")
+                        || error.getMessage().contains("outside"),
+                error.getMessage());
     }
 
     @Test

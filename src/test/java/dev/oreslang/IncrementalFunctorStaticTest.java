@@ -147,6 +147,60 @@ final class IncrementalFunctorStaticTest {
     }
 
     @Test
+    void callableEffectModifiersParticipateInAbiInvalidation() {
+        IncrementalCompiler compiler = new IncrementalCompiler();
+
+        Map<String, String> initial = Map.of(
+                "service.ores", """
+                        pub pure trap nlex fnc work(): int {
+                          return 1;
+                        }
+                        """,
+                "consumer.ores", """
+                        import * as service from "./service.ores";
+                        pub routine main(): void { return; }
+                        """);
+
+        compiler.compile(initial);
+
+        Map<String, String> pureRemoved = Map.of(
+                "service.ores", """
+                        pub trap nlex fnc work(): int {
+                          return 1;
+                        }
+                        """,
+                "consumer.ores", initial.get("consumer.ores"));
+        var afterPure = compiler.compile(pureRemoved);
+        assertTrue(afterPure.rebuilt("service.ores"));
+        assertTrue(afterPure.rebuilt("consumer.ores"),
+                "removing pure weakens the exported effect contract and must invalidate importers");
+
+        Map<String, String> trapRemoved = Map.of(
+                "service.ores", """
+                        pub nlex fnc work(): int {
+                          return 1;
+                        }
+                        """,
+                "consumer.ores", initial.get("consumer.ores"));
+        var afterTrap = compiler.compile(trapRemoved);
+        assertTrue(afterTrap.rebuilt("service.ores"));
+        assertTrue(afterTrap.rebuilt("consumer.ores"),
+                "removing trap changes the public call result from Option<int> to int");
+
+        Map<String, String> nlexRemoved = Map.of(
+                "service.ores", """
+                        pub fnc work(): int {
+                          return 1;
+                        }
+                        """,
+                "consumer.ores", initial.get("consumer.ores"));
+        var afterNlex = compiler.compile(nlexRemoved);
+        assertTrue(afterNlex.rebuilt("service.ores"));
+        assertTrue(afterNlex.rebuilt("consumer.ores"),
+                "nlex callable metadata must not become stale across code-unit generations");
+    }
+
+    @Test
     void methodOverloadAbiUsesArityIdentityButRetainsContractTypes() {
         IncrementalCompiler compiler = new IncrementalCompiler();
 

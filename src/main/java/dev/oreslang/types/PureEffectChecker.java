@@ -9,13 +9,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Conservative write-effect analysis for {@code pure} fnc/routine declarations.
+ * Conservative effect analysis for {@code pure} fnc/routine declarations.
  *
- * <p>Oreslang purity is a no-external-write contract. Reads of explicit inputs
- * and statically resolved outside state are allowed. Writes are limited to
- * storage owned by the current callable invocation. Nested function expressions
- * are checked as independent callable boundaries, so capture cannot launder
- * mutation authority. Calls with unknown effects fail closed.</p>
+ * <p>Oreslang purity rejects ambient mutable/runtime state reads as well as
+ * externally visible writes. Explicit inputs, invocation-local state,
+ * immutable closure captures, and compile-time module constants are readable.
+ * Nested function expressions are checked as independent callable boundaries,
+ * so capture cannot launder mutation authority. Calls with unknown effects
+ * fail closed.</p>
  */
 public final class PureEffectChecker {
     private enum SlotOrigin { LOCAL, PARAM, EXTERNAL }
@@ -24,6 +25,7 @@ public final class PureEffectChecker {
     private record Binding(
             SlotOrigin slot,
             ValueOrigin value,
+            Ast.BindingKind kind,
             boolean provenPureCallable) { }
 
     private record Lookup(Binding binding, boolean crossedCallableBoundary) { }
@@ -58,11 +60,23 @@ public final class PureEffectChecker {
                     inherited.binding(),
                     callableBoundaryFromParent || inherited.crossedCallableBoundary());
         }
+
+        private void rebind(String name, Binding binding) {
+            if (bindings.containsKey(name)) {
+                bindings.put(name, binding);
+                return;
+            }
+            if (parent != null && !callableBoundaryFromParent) {
+                parent.rebind(name, binding);
+                return;
+            }
+            throw error("cannot rebind unknown/outside pure-effect binding '" + name + "'");
+        }
     }
 
     private final Map<String, Ast.FunctionDecl> functions = new HashMap<>();
     private final Set<String> ambiguousFunctions = new HashSet<>();
-    private final Map<String, Set<String>> moduleBindings = new HashMap<>();
+    private final Map<String, Map<String, Ast.BindingKind>> moduleBindings = new HashMap<>();
 
     private PureEffectChecker(Ast.Program program) {
         index(program);
@@ -76,7 +90,7 @@ public final class PureEffectChecker {
 
     private void index(Ast.Program program) {
         for (Ast.ModuleDecl module : program.modules()) {
-            Set<String> bindings = new HashSet<>();
+            Map<String, Ast.BindingKind> bindings = new HashMap<>();
             for (Ast.Decl declaration : module.declarations()) {
                 if (declaration instanceof Ast.FunctionDecl fn) {
                     functions.put(module.name() + "." + fn.name(), fn);
@@ -86,10 +100,10 @@ public final class PureEffectChecker {
                         ambiguousFunctions.add(fn.name());
                     }
                 } else if (declaration instanceof Ast.FieldDecl field) {
-                    bindings.add(field.name());
+                    bindings.put(field.name(), field.bindingKind());
                 }
             }
-            moduleBindings.put(module.name(), Set.copyOf(bindings));
+            moduleBindings.put(module.name(), Map.copyOf(bindings));
         }
     }
 
@@ -125,12 +139,14 @@ public final class PureEffectChecker {
             scope.define("self", new Binding(
                     SlotOrigin.PARAM,
                     ValueOrigin.EXTERNAL_ALIAS,
+                    Ast.BindingKind.VAL,
                     false));
         }
         for (Ast.Param param : parameters) {
             scope.define(param.name(), new Binding(
                     SlotOrigin.PARAM,
                     ValueOrigin.EXTERNAL_ALIAS,
+                    param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL,
                     false));
         }
         return scope;
@@ -152,6 +168,7 @@ public final class PureEffectChecker {
             scope.define(param.name(), new Binding(
                     SlotOrigin.PARAM,
                     ValueOrigin.EXTERNAL_ALIAS,
+                    param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL,
                     false));
         }
         if (lambda.expressionBody() != null) {
@@ -174,6 +191,7 @@ public final class PureEffectChecker {
                         aliasesExternal(binding.initializer(), scope)
                                 ? ValueOrigin.EXTERNAL_ALIAS
                                 : ValueOrigin.OWNED,
+                        binding.kind(),
                         provenPureCallable(binding.initializer(), scope)));
             } else if (statement instanceof Ast.DestructureStmt destructure) {
                 scanExplicitPureLambdas(destructure.initializer(), module, owner, scope);
@@ -185,6 +203,7 @@ public final class PureEffectChecker {
                         scope.define(binding.name(), new Binding(
                                 SlotOrigin.LOCAL,
                                 value,
+                                binding.kind(),
                                 false));
                     }
                 }
@@ -236,6 +255,7 @@ public final class PureEffectChecker {
                 caught.define(attempted.errorName(), new Binding(
                         SlotOrigin.LOCAL,
                         ValueOrigin.OWNED,
+                        Ast.BindingKind.VAL,
                         false));
                 scanExplicitPureLambdas(
                         attempted.catchBody(), module, owner, caught);
@@ -249,6 +269,7 @@ public final class PureEffectChecker {
                         loopScope.define(binding.name(), new Binding(
                                 SlotOrigin.LOCAL,
                                 ValueOrigin.EXTERNAL_ALIAS,
+                                binding.kind(),
                                 false));
                     }
                 }
@@ -259,6 +280,7 @@ public final class PureEffectChecker {
                 loopScope.define(loop.bindingName(), new Binding(
                         SlotOrigin.LOCAL,
                         ValueOrigin.EXTERNAL_ALIAS,
+                        loop.bindingKind(),
                         false));
                 scanExplicitPureLambdas(loop.body(), module, owner, loopScope);
             } else if (statement instanceof Ast.ForStmt loop) {
@@ -295,6 +317,7 @@ public final class PureEffectChecker {
                 nested.define(param.name(), new Binding(
                         SlotOrigin.PARAM,
                         ValueOrigin.EXTERNAL_ALIAS,
+                        param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL,
                         false));
             }
             if (lambda.expressionBody() != null) {
@@ -359,10 +382,12 @@ public final class PureEffectChecker {
 
     private void checkFunction(String module, Ast.FunctionDecl fn) {
         Scope external = new Scope(null);
-        for (String name : moduleBindings.getOrDefault(module, Set.of())) {
-            external.define(name, new Binding(
+        for (Map.Entry<String, Ast.BindingKind> entry
+                : moduleBindings.getOrDefault(module, Map.of()).entrySet()) {
+            external.define(entry.getKey(), new Binding(
                     SlotOrigin.EXTERNAL,
                     ValueOrigin.EXTERNAL_ALIAS,
+                    entry.getValue(),
                     false));
         }
 
@@ -375,6 +400,7 @@ public final class PureEffectChecker {
             scope.define(param.name(), new Binding(
                     SlotOrigin.PARAM,
                     ValueOrigin.EXTERNAL_ALIAS,
+                    param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL,
                     false));
         }
         checkStatements(fn.body(), scope, module, fn.name());
@@ -393,6 +419,7 @@ public final class PureEffectChecker {
                         aliasesExternal(binding.initializer(), scope)
                                 ? ValueOrigin.EXTERNAL_ALIAS
                                 : ValueOrigin.OWNED,
+                        binding.kind(),
                         provenPureCallable(binding.initializer(), scope)));
                 continue;
             }
@@ -404,7 +431,7 @@ public final class PureEffectChecker {
                 for (Ast.DestructureBinding binding : destructure.bindings()) {
                     if (!binding.isDiscard()) {
                         scope.define(binding.name(), new Binding(
-                                SlotOrigin.LOCAL, value, false));
+                                SlotOrigin.LOCAL, value, binding.kind(), false));
                     }
                 }
                 continue;
@@ -475,6 +502,7 @@ public final class PureEffectChecker {
                 caught.define(attempted.errorName(), new Binding(
                         SlotOrigin.LOCAL,
                         ValueOrigin.OWNED,
+                        Ast.BindingKind.VAL,
                         false));
                 checkStatements(attempted.catchBody(), caught, module, callable);
                 checkStatements(attempted.finallyBody(), new Scope(scope), module, callable);
@@ -489,7 +517,7 @@ public final class PureEffectChecker {
                 for (Ast.DestructureBinding binding : loop.bindings()) {
                     if (!binding.isDiscard()) {
                         body.define(binding.name(), new Binding(
-                                SlotOrigin.LOCAL, origin, false));
+                                SlotOrigin.LOCAL, origin, binding.kind(), false));
                     }
                 }
                 checkStatements(loop.body(), body, module, callable);
@@ -503,6 +531,7 @@ public final class PureEffectChecker {
                         aliasesExternal(loop.iterable(), scope)
                                 ? ValueOrigin.EXTERNAL_ALIAS
                                 : ValueOrigin.OWNED,
+                        loop.bindingKind(),
                         false));
                 checkStatements(loop.body(), body, module, callable);
                 continue;
@@ -536,10 +565,10 @@ public final class PureEffectChecker {
             ValueOrigin valueOrigin) {
         if (pattern instanceof Ast.BindingPattern binding) {
             scope.define(binding.name(), new Binding(
-                    SlotOrigin.LOCAL, valueOrigin, false));
+                    SlotOrigin.LOCAL, valueOrigin, Ast.BindingKind.VAL, false));
         } else if (pattern instanceof Ast.TypePattern typed && typed.binding() != null) {
             scope.define(typed.binding(), new Binding(
-                    SlotOrigin.LOCAL, valueOrigin, false));
+                    SlotOrigin.LOCAL, valueOrigin, Ast.BindingKind.VAL, false));
         } else if (pattern instanceof Ast.ConstructorPattern constructor) {
             for (Ast.Pattern nested : constructor.arguments()) {
                 definePatternBindings(nested, scope, valueOrigin);
@@ -552,13 +581,31 @@ public final class PureEffectChecker {
             Scope scope,
             String module,
             String callable) {
-        if (expr == null || expr instanceof Ast.LiteralExpr || expr instanceof Ast.NameExpr) {
+        if (expr == null || expr instanceof Ast.LiteralExpr) return;
+        if (expr instanceof Ast.NameExpr name) {
+            assertPureRead(name, scope, callable);
             return;
         }
 
         if (expr instanceof Ast.AssignExpr assignment) {
             assertWritableTarget(assignment.target(), scope, callable);
             checkExpr(assignment.value(), scope, module, callable);
+
+            if (assignment.target() instanceof Ast.NameExpr name) {
+                Lookup previous = scope.lookup(name.name());
+                if (previous == null) {
+                    throw error("pure callable '" + callable
+                            + "' cannot rebind unknown name '" + name.name() + "'");
+                }
+                Binding binding = previous.binding();
+                scope.rebind(name.name(), new Binding(
+                        binding.slot(),
+                        aliasesExternal(assignment.value(), scope)
+                                ? ValueOrigin.EXTERNAL_ALIAS
+                                : ValueOrigin.OWNED,
+                        binding.kind(),
+                        provenPureCallable(assignment.value(), scope)));
+            }
             return;
         }
         if (expr instanceof Ast.BinaryExpr binary) {
@@ -600,6 +647,12 @@ public final class PureEffectChecker {
             return;
         }
         if (expr instanceof Ast.MemberExpr member) {
+            if (member.receiver() instanceof Ast.NameExpr root
+                    && scope.lookup(root.name()) == null) {
+                throw error("pure callable '" + callable
+                        + "' cannot read ambient/unknown member '"
+                        + root.name() + "." + member.member() + "'");
+            }
             checkExpr(member.receiver(), scope, module, callable);
             return;
         }
@@ -653,6 +706,7 @@ public final class PureEffectChecker {
                 nested.define(param.name(), new Binding(
                         SlotOrigin.PARAM,
                         ValueOrigin.EXTERNAL_ALIAS,
+                        param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL,
                         false));
             }
             if (lambda.expressionBody() != null) {
@@ -667,6 +721,42 @@ public final class PureEffectChecker {
         throw error("pure callable '" + callable
                 + "' contains an expression whose write effects are not classified: "
                 + expr.getClass().getSimpleName());
+    }
+
+    private void assertPureRead(
+            Ast.NameExpr name,
+            Scope scope,
+            String callable) {
+        Lookup found = scope.lookup(name.name());
+        if (found == null) {
+            if (name.name().equals("None")) return;
+
+            // A named fnc value is immutable code identity, not ambient runtime
+            // state. Merely passing an impure callback through a pure callable
+            // is allowed; invoking it is still rejected by assertPureCall().
+            Ast.FunctionDecl target = ambiguousFunctions.contains(name.name())
+                    ? null
+                    : functions.get(name.name());
+            if (target != null) return;
+
+            throw error("pure callable '" + callable
+                    + "' cannot read unresolved/ambient binding '" + name.name() + "'");
+        }
+
+        Binding binding = found.binding();
+        if (binding.slot() == SlotOrigin.EXTERNAL
+                && binding.kind() != Ast.BindingKind.CONST) {
+            throw error("pure callable '" + callable
+                    + "' cannot read ambient "
+                    + binding.kind().name().toLowerCase()
+                    + " binding '" + name.name() + "'");
+        }
+
+        if (found.crossedCallableBoundary()
+                && binding.kind() == Ast.BindingKind.LET) {
+            throw error("pure callable '" + callable
+                    + "' cannot read captured mutable binding '" + name.name() + "'");
+        }
     }
 
     private void assertPureCall(

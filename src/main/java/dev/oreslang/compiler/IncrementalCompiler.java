@@ -132,7 +132,7 @@ public final class IncrementalCompiler {
     }
 
     private static String abiDigest(Ast.Program program) {
-        StringBuilder abi = new StringBuilder("ores-abi-v2\n");
+        StringBuilder abi = new StringBuilder("ores-abi-v3\n");
         abi.append("namespace=").append(program.namespace() == null ? "" : program.namespace()).append('\n');
 
         for (Ast.ModuleDecl module : program.modules()) {
@@ -156,6 +156,9 @@ public final class IncrementalCompiler {
             if (fn.async()) abi.append("async ");
             if (fn.generator()) abi.append("generator ");
             if (fn.structural()) abi.append("structural ");
+            if (fn.nonLexical()) abi.append("nlex ");
+            if (fn.pure()) abi.append("pure ");
+            if (fn.trapped()) abi.append("trap ");
             abi.append(fn.kind()).append(" pub ").append(fn.name());
             appendGenerics(abi, fn.genericParameters());
             appendParams(abi, fn.parameters());

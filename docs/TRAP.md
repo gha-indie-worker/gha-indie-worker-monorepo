@@ -12,6 +12,16 @@ The central rule is intentionally small:
 `raise`, `panic`, runtime cancellation, forced termination, and fatal host
 failures are not ordinary throws and are not converted to `None`.
 
+### Current compiler support
+
+The current implementation supports synchronous module/top-level `fnc` and
+`routine` declarations plus synchronous RHS function expressions. It rejects
+`trap async`, trap generators, trap actor entry points, and trap class/actor
+members until those boundaries can preserve the same Option-valued contract.
+Those rejections are deliberate fail-closed behavior; later sections describing
+async/member trap semantics are the target contract rather than a claim that
+those forms are enabled today.
+
 ## Surface syntax
 
 ```ores

@@ -530,7 +530,7 @@ public final class Parser {
             Ast.Visibility classVisibility,
             boolean filePrivateScope) {
         Token keyword = advance(); // contextual 'constructor'
-        if (mods.async || mods.generator || mods.structural || mods.nonLexical || mods.isStatic
+        if (mods.async || mods.generator || mods.structural || mods.nonLexical || mods.pure || mods.trapped || mods.isStatic
                 || mods.isAbstract || mods.shared || mods.untrusted) {
             throw error(keyword,
                     "constructors accept only private/pub visibility; callable/actor modifiers are not permitted");
@@ -580,7 +580,7 @@ public final class Parser {
     }
 
     private void validateOnlyVisibilityModifiers(Modifiers modifiers, String context) {
-        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                 || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
             throw error(previous(), context + " accept only private/pub visibility modifiers");
         }
@@ -662,7 +662,7 @@ public final class Parser {
         if (modifiers.visibility == Ast.Visibility.PUBLIC) {
             throw error(peek(), "actor state fields are private; expose state through actor methods");
         }
-        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                 || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
             throw error(peek(), "actor state fields do not accept callable/static/actor modifiers");
         }
