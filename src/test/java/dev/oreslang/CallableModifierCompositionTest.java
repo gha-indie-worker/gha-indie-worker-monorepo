@@ -213,6 +213,35 @@ final class CallableModifierCompositionTest {
     }
 
     @Test
+    void trapWrapsAtTheCallableBoundaryNotInsideTheBodyReturnContract() {
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                trap fnc bad(): int {
+                  return None;
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                fnc bad(): void {
+                  const guarded = trap || -> int {
+                    return None;
+                  };
+                  return;
+                }
+                """));
+
+        assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
+                trap fnc maybe(): Option<int> {
+                  return None;
+                }
+
+                fnc use(): void {
+                  val Option<Option<int>> result = maybe();
+                  return;
+                }
+                """));
+    }
+
+    @Test
     void trapAlwaysAddsExactlyOneOptionLayerForNamedCallables() {
         assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
                 trap fnc scalar(): int {
