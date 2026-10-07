@@ -6,6 +6,7 @@ import dev.oreslang.runtime.CapabilityChecker;
 import dev.oreslang.runtime.IsolatePolicy;
 import dev.oreslang.types.TypeChecker;
 import dev.oreslang.types.OwnershipChecker;
+import dev.oreslang.types.PureEffectChecker;
 
 /** Trusted compiler front-end API for build systems and isolate admission. */
 public final class OresCompiler {
@@ -18,6 +19,7 @@ public final class OresCompiler {
     /** Runs the complete front-end admission policy on an already parsed program. */
     public static Ast.Program analyze(Ast.Program program) {
         program = TypeChecker.checkTypes(program);
+        PureEffectChecker.check(program);
         OwnershipChecker.check(program);
         return program;
     }

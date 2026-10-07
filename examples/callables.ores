@@ -18,9 +18,11 @@ pub routine main(): void {
   };
 
   // The comma form remains equivalent: parameter types first, result last.
+  // nlex cannot implicitly resolve the surrounding math module.
+  // Everything this callback uses is either a parameter/local or a builtin.
   val Fnc<int, int> isolated = nlex |int x| -> {
     val int base = 1;
-    return math.offset(x) + base;
+    return x + 10 + base;
   };
 
   stdio.stdout.write(math.factorial(5));

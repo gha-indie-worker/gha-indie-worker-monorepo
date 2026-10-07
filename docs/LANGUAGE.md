@@ -128,7 +128,7 @@ A module contract is not a class/struct interface and cannot be implemented by a
 
 Functions use `fnc` and are private by default. `pub` exports them. Named callables and braced lambda bodies use explicit return statements; a non-`void` named callable or braced lambda must return on every control-flow path. Expression-bodied lambdas are the deliberate compact exception: their sole expression is the return value.
 
-Class fields, instance methods, and `static fnc` members are also private by default unless marked `pub`. Private class-member access is scoped to the **declaring class**, not to a particular receiver instance: code declared in class `A` may access an `A` private member on another `A` instance, but subclasses and external callers may not. A lexical lambda created inside an `A` method retains that private-access authority with its lexical environment; an explicit or inherited `nlex` lambda does not. Runtime member dispatch enforces the same rule for dynamically linked/wildcard-imported values whose static type is `Unknown`, so imports cannot bypass private visibility. Public/structural class shapes expose only public members.
+Class fields, instance methods, and `static fnc` members are also private by default unless marked `pub`. Private class-member access is scoped to the **declaring class**, not to a particular receiver instance: code declared in class `A` may access an `A` private member on another `A` instance, but subclasses and external callers may not. A lexical lambda created inside an `A` method retains that private-access authority with its lexical environment; crossing an explicit `nlex` boundary drops it. Ordinary child lambdas may capture locals created inside that boundary, but they cannot tunnel back out and regain the declaring-class authority that the boundary removed. Runtime member dispatch enforces the same rule for dynamically linked/wildcard-imported values whose static type is `Unknown`, so imports cannot bypass private visibility. Public/structural class shapes expose only public members.
 
 Named executable callables may spell their return type with either `: T` or
 the executable slim arrow `-> T`; both forms are equivalent:
@@ -757,20 +757,27 @@ function or block. Captured mutable state remains part of the closure.
 
 ## Non-lexical callables (`nlex`)
 
-`nlex` is an opt-in **capture barrier**, not a ban on global/module lookup.
-It prevents a callable from capturing bindings owned by an enclosing runtime
-activation, so an `nlex` lambda does not retain or snapshot an outer local
-environment.
+`nlex` is an opt-in **capture and declaration-resolution boundary**.
+The callable cannot capture activation-local bindings from outside that
+boundary, and it cannot implicitly reach surrounding module members,
+top-level callables/classes, or other declaration-scope state. Explicit imports
+and built-ins remain available, and callers may pass approved values/callables
+through parameters.
 
 Inside an `nlex` region:
 
-- parameters and locals declared inside the callable remain available;
-- locals shadow module/global/import bindings normally;
-- module members, imports, top-level callables/classes, and built-ins remain
-  statically resolvable;
-- enclosing activation-local bindings cannot be captured;
-- lambdas nested in an `nlex fnc`, `nlex routine`, or `nlex` lambda inherit
-  the barrier.
+- parameters and locals declared inside the boundary remain available;
+- an ordinary nested lambda is still lexical and **may capture those
+  boundary-local parameters/locals**;
+- that ordinary child keeps the boundary as its outer-resolution floor, so it
+  cannot tunnel through the parent `nlex` callable to older locals or implicit
+  outer declarations;
+- an explicitly nested `nlex` lambda starts another capture boundary and
+  therefore cannot capture the containing boundary's locals;
+- explicit imports and built-ins remain resolvable; surrounding modules,
+  top-level callables/classes, and other outer declarations must be imported
+  explicitly or passed as parameters;
+- locals declared inside the boundary shadow imported/builtin names normally.
 
 Actor entry points remain governed by their actor isolation rules. `nlex` may
 add a capture-free guarantee to an actor fnc, but it does not replace mailbox,

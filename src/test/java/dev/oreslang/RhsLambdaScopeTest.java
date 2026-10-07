@@ -41,7 +41,9 @@ final class RhsLambdaScopeTest {
                 (Ast.LambdaExpr) ((Ast.BindingStmt) function.body().get(1)).initializer();
         assertEquals("int", create.returnType().name());
         assertEquals("Tuple", nested.returnType().name());
-        assertEquals(2, nested.returnType().arguments().size());
+        assertEquals(1, nested.returnType().arguments().size());
+        assertTrue(nested.returnType().arguments().getFirst().isSequenceShape());
+        assertEquals(2, nested.returnType().arguments().getFirst().arguments().size());
     }
 
     @Test
@@ -356,6 +358,53 @@ final class RhsLambdaScopeTest {
                         inside = inside + 1;
                         return inside;
                     };
+                    return;
+                }
+                """));
+    }
+
+
+    @Test
+    void pureAsyncRhsTypechecksOnlyThroughPureAwaitedEffects() {
+        assertDoesNotThrow(() -> check("""
+                pub pure async fnc answer(): int {
+                    return 42;
+                }
+
+                pub fnc example(): void {
+                    const create = nlex pure async || -> int {
+                        return await answer();
+                    };
+                    val result = await create();
+                    return;
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> check("""
+                pub async fnc impure_answer(): int {
+                    stdio.stdout.write("side effect");
+                    return 42;
+                }
+
+                pub fnc example(): void {
+                    const create = pure async || -> int {
+                        return await impure_answer();
+                    };
+                    val result = await create();
+                    return;
+                }
+                """));
+    }
+
+    @Test
+    void pureExpressionBodyAndTypedTrapCallableContractsTypecheck() {
+        assertDoesNotThrow(() -> check("""
+                pub fnc example(): void {
+                    const twice = pure |int value| -> value * 2;
+                    const Fnc<Option<int>> protected = pure trap || -> int {
+                        return twice(21);
+                    };
+                    val answer = protected().unwrap();
                     return;
                 }
                 """));

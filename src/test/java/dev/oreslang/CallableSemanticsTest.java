@@ -35,7 +35,7 @@ final class CallableSemanticsTest {
                   };
                   val Fnc<int, int> isolated = nlex |int x| -> {
                     val int base = 1;
-                    return math.offset(x) + base;
+                    return x + 10 + base;
                   };
                   stdio.stdout.write(math.factorial(5));
                   stdio.stdout.write(":");
@@ -64,8 +64,8 @@ final class CallableSemanticsTest {
     }
 
     @Test
-    void nlexNamedCallableMakesNestedLambdasNonCapturing() {
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+    void nlexNamedCallableLetsOrdinaryChildrenCaptureInsideBoundary() {
+        assertDoesNotThrow(() ->
                 TypeChecker.check(Parser.parse("""
                         nlex fnc make(): (() => int) {
                           val int local = 42;
@@ -74,21 +74,33 @@ final class CallableSemanticsTest {
                           };
                         }
                         """)));
-        assertTrue(error.getMessage().contains("local") || error.getMessage().contains("unknown name"));
     }
 
     @Test
-    void nlexStillResolvesModulesGlobalsAndOwnShadowingLocals() throws Exception {
-        String output = run("""
-                define module math
-                  pub fnc one(): int { return 1; }
-                end
+    void nlexBlocksImplicitOuterDeclarationsButOwnShadowingLocalsWork() throws Exception {
+        IllegalArgumentException blocked = assertThrows(
+                IllegalArgumentException.class,
+                () -> TypeChecker.check(Parser.parse("""
+                        define module math
+                          pub fnc one(): int { return 1; }
+                        end
 
+                        pub fnc bad(): int {
+                          val Fnc<int> callback = nlex || -> {
+                            return math.one();
+                          };
+                          return callback();
+                        }
+                        """)));
+        assertTrue(blocked.getMessage().contains("nlex callable"));
+        assertTrue(blocked.getMessage().contains("math"));
+
+        String output = run("""
                 pub routine main(): void {
                   val int value = 99;
                   val Fnc<int> callback = nlex || -> {
                     val int value = 2;
-                    return math.one() + value;
+                    return value + 1;
                   };
                   stdio.stdout.write(callback());
                   stdio.stdout.write(value);
@@ -115,9 +127,9 @@ final class CallableSemanticsTest {
                   }
                 end
 
-                nlex fnc makeOffsetter(): IntFn {
+                nlex fnc makeOffsetter(IntFn offset): IntFn {
                   return |value| -> {
-                    return math.offset(value);
+                    return offset(value);
                   };
                 }
 
@@ -130,10 +142,10 @@ final class CallableSemanticsTest {
 
                   val IntFn explicit_nlex = nlex |value| -> {
                     val int outer_bias = 1;
-                    return math.offset(value) + outer_bias;
+                    return value + 10 + outer_bias;
                   };
 
-                  val IntFn inherited_nlex = makeOffsetter();
+                  val IntFn inherited_nlex = makeOffsetter(math.offset);
 
                   stdio.stdout.write(math.factorial(5));
                   stdio.stdout.write(":");

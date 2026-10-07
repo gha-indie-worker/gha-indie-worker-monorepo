@@ -192,7 +192,8 @@ final class PrivateVisibilityTest {
                           }
                         end
                         """)));
-        assertTrue(failure.getMessage().contains("private static function"));
+        assertTrue(failure.getMessage().contains("nlex callable"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("Vault"), failure.getMessage());
     }
 
     @Test
