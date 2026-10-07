@@ -104,9 +104,10 @@ specific sequencing relationship *between* two init hooks in the same cycle,
 that relationship should be made explicit in application code rather than
 inferred from the import edges.
 
-## Module contracts
+## Contracts: module shapes and class static shapes
 
-Module shape is described by a dedicated `contract`, not by a trait or ordinary type interface. Traits are for structs, classes, actors, and other types; contracts are for modules.
+A plain `contract` describes a module namespace. It is distinct from a trait or
+ordinary instance interface:
 
 ```ores
 define contract MathApi as
@@ -120,9 +121,71 @@ define module math conforms MathApi as
 end
 ```
 
-Only exported (`pub`) module members satisfy a module contract. Contracts may require exported fields/constants as well as functions. A module may conform to multiple contracts with comma-separated names. The legacy module `@AdheresTo(...)` form is rejected; use `conforms` instead.
+Only exported (`pub`) module members satisfy a module contract. A module may
+conform to multiple contracts with comma-separated names. The legacy module
+`@AdheresTo(...)` form is rejected; use `conforms` instead.
 
-A module contract is not a class/struct interface and cannot be implemented by a class or actor.
+A class has a separate instance shape and class/static namespace. Use a
+`static contract` when the class namespace itself must satisfy a shape:
+
+```ores
+define static contract Factory as
+  version: String;
+  fnc create(int id) => int;
+end
+
+define class Widget implements static Factory as
+  pub static const version: String = "1";
+
+  pub static fnc create(int id): int {
+    return id;
+  }
+end
+```
+
+The three conformance forms are intentionally different:
+
+- `module M conforms C` checks the exported module namespace against a plain
+  module contract.
+- `class C implements I` checks instances of `C` against an ordinary
+  interface.
+- `class C implements static S` checks the class namespace against a
+  `static contract`.
+
+The compiler never lets an instance field or instance method satisfy a static
+contract, and static members never satisfy an ordinary instance interface.
+Likewise, a static contract cannot be used in `module ... conforms ...`, and
+a plain module contract cannot be attached with `implements static`.
+
+Contract field requirements are readable-by-default. An unqualified field such
+as `version: String` may be satisfied by a public `const`, `val`, or
+`let` member of that namespace. Spelling the binding kind in the contract,
+for example `let count: int`, requires that exact binding kind.
+
+Class static fields use the same explicit namespace as static functions:
+
+```ores
+define class Counter as
+  pub static let count: int = 0;
+
+  pub static fnc next(): int {
+    Counter.count = Counter.count + 1;
+    return Counter.count;
+  }
+end
+```
+
+Static fields are not instance storage and therefore do not consume
+constructor slots, participate in instance field layout, or become inherited
+storage fields. A static field also cannot depend on the class's generic type
+parameters: `class Box<T>` still has one class namespace, not a separate
+static cell for every `Box<T>` specialization. Static functions retain their
+existing inherited lookup behavior.
+
+Static contracts may extend only other static contracts; plain module
+contracts may extend only plain module contracts. This keeps the two namespace
+categories explicit instead of making a module and a class object
+interchangeable.
 
 ## Functions and returns
 
