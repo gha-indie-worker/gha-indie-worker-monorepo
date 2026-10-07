@@ -18,23 +18,40 @@ import static org.junit.jupiter.api.Assertions.*;
 final class CallableModifierCompositionTest {
 
     @Test
-    void namedPureTrapNlexModifiersComposeInEveryOrder() {
-        for (List<String> order : permutations("pure", "trap", "nlex")) {
-            String modifiers = String.join(" ", order);
-            Ast.Program program = Parser.parse("""
-                    %s fnc guarded(int value): int {
-                      return value + 1;
-                    }
-                    """.formatted(modifiers));
+    void namedEffectModifiersComposeAroundFncInEverySupportedCombinationAndOrder() {
+        List<List<String>> effectSets = List.of(
+                List.of("pure"),
+                List.of("trap"),
+                List.of("nlex"),
+                List.of("pure", "trap"),
+                List.of("pure", "nlex"),
+                List.of("trap", "nlex"),
+                List.of("pure", "trap", "nlex"));
 
-            Ast.FunctionDecl fn =
-                    (Ast.FunctionDecl) program.modules().getFirst().declarations().getFirst();
-            assertTrue(fn.pure(), modifiers);
-            assertTrue(fn.trapped(), modifiers);
-            assertTrue(fn.nonLexical(), modifiers);
+        int cases = 0;
+        for (List<String> effects : effectSets) {
+            List<String> tokens = new ArrayList<>(effects);
+            tokens.add("fnc");
+            for (List<String> order : permutations(tokens.toArray(String[]::new))) {
+                cases++;
+                String spelling = String.join(" ", order);
+                Ast.Program program = Parser.parse("""
+                        %s guarded(int value): int {
+                          return value + 1;
+                        }
+                        """.formatted(spelling));
 
-            assertDoesNotThrow(() -> OresCompiler.analyze(program), modifiers);
+                Ast.FunctionDecl fn =
+                        (Ast.FunctionDecl) program.modules().getFirst().declarations().getFirst();
+                assertEquals(effects.contains("pure"), fn.pure(), spelling);
+                assertEquals(effects.contains("trap"), fn.trapped(), spelling);
+                assertEquals(effects.contains("nlex"), fn.nonLexical(), spelling);
+
+                assertDoesNotThrow(() -> OresCompiler.analyze(program), spelling);
+            }
         }
+
+        assertEquals(48, cases);
     }
 
     @Test
@@ -90,6 +107,17 @@ final class CallableModifierCompositionTest {
                 """));
 
         assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                trap fnc scalar(): int {
+                  return 7;
+                }
+
+                fnc bad(): void {
+                  val int unwrapped = scalar();
+                  return;
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
                 trap fnc nested(): Option<int> {
                   return Some(9);
                 }
@@ -120,6 +148,15 @@ final class CallableModifierCompositionTest {
                   val Option<int> one = scalar();
                   val Option<Option<int>> two = nested();
                   val Option<void> three = done();
+                  return;
+                }
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> OresCompiler.parseAndTypeCheck("""
+                fnc bad(): void {
+                  const Fnc<int> unwrapped = trap || -> int {
+                    return 9;
+                  };
                   return;
                 }
                 """));
