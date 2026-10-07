@@ -97,25 +97,53 @@ public final class PureEffectChecker {
         for (Ast.ModuleDecl module : program.modules()) {
             for (Ast.Decl declaration : module.declarations()) {
                 if (declaration instanceof Ast.FunctionDecl fn) {
-                    if (fn.pure()) checkFunction(module.name(), fn);
-                    else scanExplicitPureLambdas(fn.body(), module.name(), fn.name());
+                    if (fn.pure()) {
+                        checkFunction(module.name(), fn);
+                    } else {
+                        scanExplicitPureLambdas(
+                                fn.body(),
+                                module.name(),
+                                fn.name(),
+                                scanCallableScope(fn.parameters(), false));
+                    }
                 } else if (declaration instanceof Ast.ClassDecl klass) {
                     for (Ast.MethodDecl method : klass.methods()) {
                         scanExplicitPureLambdas(
                                 method.body(),
                                 module.name(),
-                                klass.name() + "." + method.name());
+                                klass.name() + "." + method.name(),
+                                scanCallableScope(method.parameters(), !method.isStatic()));
                     }
                 }
             }
         }
     }
 
+    private Scope scanCallableScope(List<Ast.Param> parameters, boolean hasSelf) {
+        Scope scope = new Scope(null);
+        if (hasSelf) {
+            scope.define("self", new Binding(
+                    SlotOrigin.PARAM,
+                    ValueOrigin.EXTERNAL_ALIAS,
+                    false));
+        }
+        for (Ast.Param param : parameters) {
+            scope.define(param.name(), new Binding(
+                    SlotOrigin.PARAM,
+                    ValueOrigin.EXTERNAL_ALIAS,
+                    false));
+        }
+        return scope;
+    }
+
     private void checkStandalonePureLambda(
             Ast.LambdaExpr lambda,
             String module,
-            String owner) {
-        Scope scope = new Scope(null);
+            String owner,
+            Scope outer) {
+        Scope scope = lambda.nonLexical()
+                ? new Scope(null)
+                : new Scope(outer, true);
         for (Ast.Param param : lambda.parameters()) {
             if (param.mutable()) {
                 throw error("pure function expression in '" + owner
@@ -136,64 +164,115 @@ public final class PureEffectChecker {
     private void scanExplicitPureLambdas(
             List<Ast.Stmt> statements,
             String module,
-            String owner) {
+            String owner,
+            Scope scope) {
         for (Ast.Stmt statement : statements) {
             if (statement instanceof Ast.BindingStmt binding) {
-                scanExplicitPureLambdas(binding.initializer(), module, owner);
+                scanExplicitPureLambdas(binding.initializer(), module, owner, scope);
+                scope.define(binding.name(), new Binding(
+                        SlotOrigin.LOCAL,
+                        aliasesExternal(binding.initializer(), scope)
+                                ? ValueOrigin.EXTERNAL_ALIAS
+                                : ValueOrigin.OWNED,
+                        provenPureCallable(binding.initializer(), scope)));
             } else if (statement instanceof Ast.DestructureStmt destructure) {
-                scanExplicitPureLambdas(destructure.initializer(), module, owner);
+                scanExplicitPureLambdas(destructure.initializer(), module, owner, scope);
+                ValueOrigin value = aliasesExternal(destructure.initializer(), scope)
+                        ? ValueOrigin.EXTERNAL_ALIAS
+                        : ValueOrigin.OWNED;
+                for (Ast.DestructureBinding binding : destructure.bindings()) {
+                    if (!binding.isDiscard()) {
+                        scope.define(binding.name(), new Binding(
+                                SlotOrigin.LOCAL,
+                                value,
+                                false));
+                    }
+                }
             } else if (statement instanceof Ast.ReturnStmt returned) {
-                scanExplicitPureLambdas(returned.value(), module, owner);
+                scanExplicitPureLambdas(returned.value(), module, owner, scope);
             } else if (statement instanceof Ast.YieldStmt yielded) {
-                // Pure generators are currently rejected by TypeChecker, but a
-                // non-pure generator may still yield an explicitly pure lambda.
-                scanExplicitPureLambdas(yielded.value(), module, owner);
+                scanExplicitPureLambdas(yielded.value(), module, owner, scope);
             } else if (statement instanceof Ast.ExprStmt expression) {
-                scanExplicitPureLambdas(expression.expression(), module, owner);
+                scanExplicitPureLambdas(expression.expression(), module, owner, scope);
             } else if (statement instanceof Ast.DeferStmt defer) {
-                scanExplicitPureLambdas(defer.expression(), module, owner);
+                scanExplicitPureLambdas(defer.expression(), module, owner, scope);
             } else if (statement instanceof Ast.BlockStmt block) {
-                scanExplicitPureLambdas(block.body(), module, owner);
+                scanExplicitPureLambdas(block.body(), module, owner, new Scope(scope));
             } else if (statement instanceof Ast.LoopStmt loop) {
-                scanExplicitPureLambdas(loop.body(), module, owner);
+                scanExplicitPureLambdas(loop.body(), module, owner, new Scope(scope));
             } else if (statement instanceof Ast.IfStmt conditional) {
                 for (Ast.IfBranch branch : conditional.branches()) {
-                    scanExplicitPureLambdas(branch.condition(), module, owner);
-                    scanExplicitPureLambdas(branch.body(), module, owner);
+                    scanExplicitPureLambdas(branch.condition(), module, owner, scope);
+                    scanExplicitPureLambdas(branch.body(), module, owner, new Scope(scope));
                 }
-                scanExplicitPureLambdas(conditional.elseBody(), module, owner);
+                scanExplicitPureLambdas(
+                        conditional.elseBody(), module, owner, new Scope(scope));
             } else if (statement instanceof Ast.MatchStmt matched) {
-                scanExplicitPureLambdas(matched.subject(), module, owner);
+                scanExplicitPureLambdas(matched.subject(), module, owner, scope);
+                ValueOrigin subjectOrigin = aliasesExternal(matched.subject(), scope)
+                        ? ValueOrigin.EXTERNAL_ALIAS
+                        : ValueOrigin.OWNED;
                 for (Ast.MatchArm arm : matched.arms()) {
-                    scanExplicitPureLambdas(arm.guard(), module, owner);
-                    scanExplicitPureLambdas(arm.body(), module, owner);
+                    Scope armScope = new Scope(scope);
+                    definePatternBindings(arm.pattern(), armScope, subjectOrigin);
+                    scanExplicitPureLambdas(arm.guard(), module, owner, armScope);
+                    scanExplicitPureLambdas(arm.body(), module, owner, armScope);
                 }
             } else if (statement instanceof Ast.SwitchStmt switched) {
-                scanExplicitPureLambdas(switched.subject(), module, owner);
+                scanExplicitPureLambdas(switched.subject(), module, owner, scope);
                 for (Ast.SwitchCase arm : switched.cases()) {
+                    Scope armScope = new Scope(scope);
                     for (Ast.Expr constant : arm.constants()) {
-                        scanExplicitPureLambdas(constant, module, owner);
+                        scanExplicitPureLambdas(constant, module, owner, armScope);
                     }
-                    scanExplicitPureLambdas(arm.body(), module, owner);
+                    scanExplicitPureLambdas(arm.body(), module, owner, armScope);
                 }
-                scanExplicitPureLambdas(switched.defaultBody(), module, owner);
+                scanExplicitPureLambdas(
+                        switched.defaultBody(), module, owner, new Scope(scope));
             } else if (statement instanceof Ast.TryStmt attempted) {
-                scanExplicitPureLambdas(attempted.body(), module, owner);
-                scanExplicitPureLambdas(attempted.catchBody(), module, owner);
-                scanExplicitPureLambdas(attempted.finallyBody(), module, owner);
+                scanExplicitPureLambdas(
+                        attempted.body(), module, owner, new Scope(scope));
+                Scope caught = new Scope(scope);
+                caught.define(attempted.errorName(), new Binding(
+                        SlotOrigin.LOCAL,
+                        ValueOrigin.OWNED,
+                        false));
+                scanExplicitPureLambdas(
+                        attempted.catchBody(), module, owner, caught);
+                scanExplicitPureLambdas(
+                        attempted.finallyBody(), module, owner, new Scope(scope));
             } else if (statement instanceof Ast.ForOfDestructureStmt loop) {
-                scanExplicitPureLambdas(loop.iterable(), module, owner);
-                scanExplicitPureLambdas(loop.body(), module, owner);
-            } else if (statement instanceof Ast.ForOfStmt loop) {
-                scanExplicitPureLambdas(loop.iterable(), module, owner);
-                scanExplicitPureLambdas(loop.body(), module, owner);
-            } else if (statement instanceof Ast.ForStmt loop) {
-                if (loop.initializer() != null) {
-                    scanExplicitPureLambdas(List.of(loop.initializer()), module, owner);
+                scanExplicitPureLambdas(loop.iterable(), module, owner, scope);
+                Scope loopScope = new Scope(scope);
+                for (Ast.DestructureBinding binding : loop.bindings()) {
+                    if (!binding.isDiscard()) {
+                        loopScope.define(binding.name(), new Binding(
+                                SlotOrigin.LOCAL,
+                                ValueOrigin.EXTERNAL_ALIAS,
+                                false));
+                    }
                 }
-                scanExplicitPureLambdas(loop.condition(), module, owner);
-                scanExplicitPureLambdas(loop.update(), module, owner);
-                scanExplicitPureLambdas(loop.body(), module, owner);
+                scanExplicitPureLambdas(loop.body(), module, owner, loopScope);
+            } else if (statement instanceof Ast.ForOfStmt loop) {
+                scanExplicitPureLambdas(loop.iterable(), module, owner, scope);
+                Scope loopScope = new Scope(scope);
+                loopScope.define(loop.bindingName(), new Binding(
+                        SlotOrigin.LOCAL,
+                        ValueOrigin.EXTERNAL_ALIAS,
+                        false));
+                scanExplicitPureLambdas(loop.body(), module, owner, loopScope);
+            } else if (statement instanceof Ast.ForStmt loop) {
+                Scope loopScope = new Scope(scope);
+                if (loop.initializer() != null) {
+                    scanExplicitPureLambdas(
+                            List.of(loop.initializer()), module, owner, loopScope);
+                }
+                scanExplicitPureLambdas(
+                        loop.condition(), module, owner, loopScope);
+                scanExplicitPureLambdas(
+                        loop.update(), module, owner, loopScope);
+                scanExplicitPureLambdas(
+                        loop.body(), module, owner, new Scope(loopScope));
             }
         }
     }
@@ -201,67 +280,79 @@ public final class PureEffectChecker {
     private void scanExplicitPureLambdas(
             Ast.Expr expression,
             String module,
-            String owner) {
+            String owner,
+            Scope scope) {
         if (expression == null) return;
         if (expression instanceof Ast.LambdaExpr lambda) {
             if (lambda.pure()) {
-                checkStandalonePureLambda(lambda, module, owner);
+                checkStandalonePureLambda(lambda, module, owner, scope);
                 return;
             }
+            Scope nested = lambda.nonLexical()
+                    ? new Scope(null)
+                    : new Scope(scope, true);
+            for (Ast.Param param : lambda.parameters()) {
+                nested.define(param.name(), new Binding(
+                        SlotOrigin.PARAM,
+                        ValueOrigin.EXTERNAL_ALIAS,
+                        false));
+            }
             if (lambda.expressionBody() != null) {
-                scanExplicitPureLambdas(lambda.expressionBody(), module, owner);
+                scanExplicitPureLambdas(
+                        lambda.expressionBody(), module, owner, nested);
             }
             if (lambda.blockBody() != null) {
-                scanExplicitPureLambdas(lambda.blockBody(), module, owner);
+                scanExplicitPureLambdas(
+                        lambda.blockBody(), module, owner, nested);
             }
             return;
         }
         if (expression instanceof Ast.BinaryExpr binary) {
-            scanExplicitPureLambdas(binary.left(), module, owner);
-            scanExplicitPureLambdas(binary.right(), module, owner);
+            scanExplicitPureLambdas(binary.left(), module, owner, scope);
+            scanExplicitPureLambdas(binary.right(), module, owner, scope);
         } else if (expression instanceof Ast.UnaryExpr unary) {
-            scanExplicitPureLambdas(unary.operand(), module, owner);
+            scanExplicitPureLambdas(unary.operand(), module, owner, scope);
         } else if (expression instanceof Ast.AssignExpr assign) {
-            scanExplicitPureLambdas(assign.target(), module, owner);
-            scanExplicitPureLambdas(assign.value(), module, owner);
+            scanExplicitPureLambdas(assign.target(), module, owner, scope);
+            scanExplicitPureLambdas(assign.value(), module, owner, scope);
         } else if (expression instanceof Ast.ConditionalExpr conditional) {
-            scanExplicitPureLambdas(conditional.condition(), module, owner);
-            scanExplicitPureLambdas(conditional.whenTrue(), module, owner);
-            scanExplicitPureLambdas(conditional.whenFalse(), module, owner);
+            scanExplicitPureLambdas(conditional.condition(), module, owner, scope);
+            scanExplicitPureLambdas(conditional.whenTrue(), module, owner, scope);
+            scanExplicitPureLambdas(conditional.whenFalse(), module, owner, scope);
         } else if (expression instanceof Ast.TypeTestExpr tested) {
-            scanExplicitPureLambdas(tested.value(), module, owner);
+            scanExplicitPureLambdas(tested.value(), module, owner, scope);
         } else if (expression instanceof Ast.PatternTestExpr tested) {
-            scanExplicitPureLambdas(tested.value(), module, owner);
+            scanExplicitPureLambdas(tested.value(), module, owner, scope);
         } else if (expression instanceof Ast.CastExpr cast) {
-            scanExplicitPureLambdas(cast.value(), module, owner);
+            scanExplicitPureLambdas(cast.value(), module, owner, scope);
         } else if (expression instanceof Ast.CallExpr call) {
-            scanExplicitPureLambdas(call.callee(), module, owner);
+            scanExplicitPureLambdas(call.callee(), module, owner, scope);
             for (Ast.Expr arg : call.arguments()) {
-                scanExplicitPureLambdas(arg, module, owner);
+                scanExplicitPureLambdas(arg, module, owner, scope);
             }
         } else if (expression instanceof Ast.MemberExpr member) {
-            scanExplicitPureLambdas(member.receiver(), module, owner);
+            scanExplicitPureLambdas(member.receiver(), module, owner, scope);
         } else if (expression instanceof Ast.IndexExpr indexed) {
-            scanExplicitPureLambdas(indexed.receiver(), module, owner);
-            scanExplicitPureLambdas(indexed.index(), module, owner);
+            scanExplicitPureLambdas(indexed.receiver(), module, owner, scope);
+            scanExplicitPureLambdas(indexed.index(), module, owner, scope);
         } else if (expression instanceof Ast.NewExpr created) {
             for (Ast.Expr arg : created.arguments()) {
-                scanExplicitPureLambdas(arg, module, owner);
+                scanExplicitPureLambdas(arg, module, owner, scope);
             }
         } else if (expression instanceof Ast.AwaitExpr awaited) {
-            scanExplicitPureLambdas(awaited.expression(), module, owner);
+            scanExplicitPureLambdas(awaited.expression(), module, owner, scope);
         } else if (expression instanceof Ast.ListExpr list) {
             for (Ast.Expr item : list.elements()) {
-                scanExplicitPureLambdas(item, module, owner);
+                scanExplicitPureLambdas(item, module, owner, scope);
             }
         } else if (expression instanceof Ast.TupleExpr tuple) {
             for (Ast.Expr item : tuple.elements()) {
-                scanExplicitPureLambdas(item, module, owner);
+                scanExplicitPureLambdas(item, module, owner, scope);
             }
         } else if (expression instanceof Ast.ObjectExpr object) {
             for (Ast.ObjectField field : object.fields()) {
-                scanExplicitPureLambdas(field.dynamicName(), module, owner);
-                scanExplicitPureLambdas(field.value(), module, owner);
+                scanExplicitPureLambdas(field.dynamicName(), module, owner, scope);
+                scanExplicitPureLambdas(field.value(), module, owner, scope);
             }
         }
     }
@@ -615,7 +706,7 @@ public final class PureEffectChecker {
     }
 
     private boolean provenPureCallable(Ast.Expr expr, Scope scope) {
-        if (expr instanceof Ast.LambdaExpr) return true;
+        if (expr instanceof Ast.LambdaExpr lambda) return lambda.pure();
         if (expr instanceof Ast.NameExpr name) {
             Lookup found = scope.lookup(name.name());
             if (found != null && found.binding().provenPureCallable()) return true;

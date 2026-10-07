@@ -365,14 +365,14 @@ final class RhsLambdaScopeTest {
 
 
     @Test
-    void pureAsyncRhsTypechecksOnlyThroughPureAwaitedEffects() {
+    void pureAsyncRhsTypechecksOnlyThroughPureAwaitedEffectsAndNlexStillBlocksOuterResolution() {
         assertDoesNotThrow(() -> check("""
                 pub pure async fnc answer(): int {
                     return 42;
                 }
 
                 pub fnc example(): void {
-                    const create = nlex pure async || -> int {
+                    const create = pure async || -> int {
                         return await answer();
                     };
                     val result = await create();
@@ -394,6 +394,22 @@ final class RhsLambdaScopeTest {
                     return;
                 }
                 """));
+
+        IllegalArgumentException nlex = assertThrows(IllegalArgumentException.class, () -> check("""
+                pub pure async fnc answer(): int {
+                    return 42;
+                }
+
+                pub fnc example(): void {
+                    const create = nlex pure async || -> int {
+                        return await answer();
+                    };
+                    val result = await create();
+                    return;
+                }
+                """));
+        assertTrue(nlex.getMessage().contains("nlex callable"), nlex.getMessage());
+        assertTrue(nlex.getMessage().contains("answer"), nlex.getMessage());
     }
 
     @Test
