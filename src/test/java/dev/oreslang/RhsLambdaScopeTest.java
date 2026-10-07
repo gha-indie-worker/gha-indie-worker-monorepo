@@ -41,7 +41,9 @@ final class RhsLambdaScopeTest {
                 (Ast.LambdaExpr) ((Ast.BindingStmt) function.body().get(1)).initializer();
         assertEquals("int", create.returnType().name());
         assertEquals("Tuple", nested.returnType().name());
-        assertEquals(2, nested.returnType().arguments().size());
+        assertEquals(1, nested.returnType().arguments().size());
+        assertTrue(nested.returnType().arguments().getFirst().isSequenceShape());
+        assertEquals(2, nested.returnType().arguments().getFirst().arguments().size());
     }
 
     @Test

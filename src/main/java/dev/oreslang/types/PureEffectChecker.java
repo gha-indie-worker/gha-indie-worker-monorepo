@@ -126,7 +126,11 @@ public final class PureEffectChecker {
                     ValueOrigin.EXTERNAL_ALIAS,
                     false));
         }
-        checkStatements(lambda.blockBody(), scope, module, owner + "::<pure fnc>");
+        if (lambda.expressionBody() != null) {
+            checkExpr(lambda.expressionBody(), scope, module, owner + "::<pure fnc>");
+        } else {
+            checkStatements(lambda.blockBody(), scope, module, owner + "::<pure fnc>");
+        }
     }
 
     private void scanExplicitPureLambdas(
@@ -520,9 +524,12 @@ public final class PureEffectChecker {
             throw error("pure callable '" + callable
                     + "' cannot construct with 'new' until constructor and field-initializer effects are typed");
         }
-        if (expr instanceof Ast.AwaitExpr) {
-            throw error("pure callable '" + callable
-                    + "' cannot await until asynchronous effects are typed");
+        if (expr instanceof Ast.AwaitExpr awaited) {
+            // Suspension is not itself an external write effect. The awaited
+            // expression still has to satisfy the ordinary transitive purity
+            // rules (for example, a call must target a proven-pure callable).
+            checkExpr(awaited.expression(), scope, module, callable);
+            return;
         }
         if (expr instanceof Ast.ListExpr list) {
             for (Ast.Expr item : list.elements()) {
