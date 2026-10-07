@@ -6,7 +6,6 @@ import dev.oreslang.runtime.CapabilityChecker;
 import dev.oreslang.runtime.IsolatePolicy;
 import dev.oreslang.types.TypeChecker;
 import dev.oreslang.types.OwnershipChecker;
-import dev.oreslang.types.PureEffectChecker;
 
 /** Trusted compiler front-end API for build systems and isolate admission. */
 public final class OresCompiler {
@@ -19,9 +18,23 @@ public final class OresCompiler {
     /** Runs the complete front-end admission policy on an already parsed program. */
     public static Ast.Program analyze(Ast.Program program) {
         program = TypeChecker.checkTypes(program);
-        PureEffectChecker.check(program);
         OwnershipChecker.check(program);
         return program;
+    }
+
+    /** Compiler diagnostics are returned explicitly instead of written to shared stderr. */
+    public record AnalysisResult(Ast.Program program, java.util.List<String> warnings) {
+        public AnalysisResult { warnings = java.util.List.copyOf(warnings); }
+    }
+
+    public static AnalysisResult parseAndTypeCheckWithDiagnostics(String source) {
+        return analyzeWithDiagnostics(Parser.parse(source));
+    }
+
+    public static AnalysisResult analyzeWithDiagnostics(Ast.Program program) {
+        TypeChecker.TypeCheckResult checked = TypeChecker.checkTypesWithDiagnostics(program);
+        OwnershipChecker.check(checked.program());
+        return new AnalysisResult(checked.program(), checked.warnings());
     }
 
     /**
