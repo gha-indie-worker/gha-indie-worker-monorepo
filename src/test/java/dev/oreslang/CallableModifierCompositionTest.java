@@ -55,6 +55,66 @@ final class CallableModifierCompositionTest {
     }
 
     @Test
+    void namedRoutineEffectsUseTheSameModifierAndTrapRules() {
+        for (List<String> order : permutations("pure", "trap", "nlex", "routine")) {
+            String spelling = String.join(" ", order);
+            Ast.Program program = Parser.parse("""
+                    %s guarded(int value): int {
+                      return value + 1;
+                    }
+                    """.formatted(spelling));
+
+            Ast.FunctionDecl routine =
+                    (Ast.FunctionDecl) program.modules().getFirst().declarations().getFirst();
+            assertEquals(Ast.CallableKind.ROUTINE, routine.kind(), spelling);
+            assertTrue(routine.pure(), spelling);
+            assertTrue(routine.trapped(), spelling);
+            assertTrue(routine.nonLexical(), spelling);
+            assertDoesNotThrow(() -> OresCompiler.analyze(program), spelling);
+        }
+
+        assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
+                trap routine guarded(): int {
+                  return 7;
+                }
+
+                fnc use(): void {
+                  val Option<int> result = guarded();
+                  return;
+                }
+                """));
+    }
+
+    @Test
+    void memberCallablesFailClosedInsteadOfDiscardingEffectModifiers() {
+        for (String modifier : List.of("pure", "trap", "nlex")) {
+            assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                    define class Box as
+                      %s get(): int {
+                        return 1;
+                      }
+                    end
+                    """.formatted(modifier)));
+
+            assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                    define class Box as
+                      %s static fnc get(): int {
+                        return 1;
+                      }
+                    end
+                    """.formatted(modifier)));
+
+            assertThrows(IllegalArgumentException.class, () -> Parser.parse("""
+                    actor Worker {
+                      %s get(): int {
+                        return 1;
+                      }
+                    }
+                    """.formatted(modifier)));
+        }
+    }
+
+    @Test
     void rhsPureTrapNlexModifiersComposeInEveryOrder() {
         for (List<String> order : permutations("pure", "trap", "nlex")) {
             String modifiers = String.join(" ", order);
@@ -78,6 +138,22 @@ final class CallableModifierCompositionTest {
 
             assertDoesNotThrow(() -> OresCompiler.analyze(program), modifiers);
         }
+    }
+
+    @Test
+    void functionExpressionEffectsBelongToTheValueNotItsBindingKind() {
+        assertDoesNotThrow(() -> OresCompiler.parseAndTypeCheck("""
+                fnc use(): void {
+                  const c = pure || -> int { return 1; };
+                  val v = trap || -> int { return 2; };
+                  let n = nlex || -> int { return 3; };
+
+                  val int a = c();
+                  val Option<int> b = v();
+                  val int d = n();
+                  return;
+                }
+                """));
     }
 
     @Test
