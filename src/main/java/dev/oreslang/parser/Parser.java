@@ -73,9 +73,9 @@ public final class Parser {
                 modifiers = mergeModifiers(modifiers, parseModifiers());
                 consume(DEFINE, "compatibility contract declaration requires both 'contract' and 'define'");
                 modifiers = mergeModifiers(modifiers, parseModifiers());
-                validateOnlyVisibilityModifiers(modifiers, "contracts");
+                validateContractModifiers(modifiers);
                 rejectCallableStructuralAnnotation(annotations, "contract declarations");
-                rootDeclarations.add(parseContract(modifiers.visibility));
+                rootDeclarations.add(parseContract(modifiers.visibility, modifiers.isStatic));
                 continue;
             }
 
@@ -106,9 +106,9 @@ public final class Parser {
                 }
                 if (match(CONTRACT)) {
                     modifiers = mergeModifiers(modifiers, parseModifiers());
-                    validateOnlyVisibilityModifiers(modifiers, "contracts");
+                    validateContractModifiers(modifiers);
                     rejectCallableStructuralAnnotation(annotations, "contract declarations");
-                    rootDeclarations.add(parseContract(modifiers.visibility));
+                    rootDeclarations.add(parseContract(modifiers.visibility, modifiers.isStatic));
                     continue;
                 }
                 if (match(CLASS)) {
@@ -249,9 +249,9 @@ public final class Parser {
             modifiers = mergeModifiers(modifiers, parseModifiers());
             consume(DEFINE, "compatibility contract declaration requires both 'contract' and 'define'");
             modifiers = mergeModifiers(modifiers, parseModifiers());
-            validateOnlyVisibilityModifiers(modifiers, "contracts");
+            validateContractModifiers(modifiers);
             rejectCallableStructuralAnnotation(annotations, "contract declarations");
-            return parseContract(modifiers.visibility);
+            return parseContract(modifiers.visibility, modifiers.isStatic);
         }
 
         if (check(INTERFACE) && defineFollowsAfterVisibilityModifiers()) {
@@ -271,9 +271,9 @@ public final class Parser {
             }
             if (match(CONTRACT)) {
                 modifiers = mergeModifiers(modifiers, parseModifiers());
-                validateOnlyVisibilityModifiers(modifiers, "contracts");
+                validateContractModifiers(modifiers);
                 rejectCallableStructuralAnnotation(annotations, "contract declarations");
-                return parseContract(modifiers.visibility);
+                return parseContract(modifiers.visibility, modifiers.isStatic);
             }
             if (match(CLASS)) {
                 modifiers = mergeModifiers(modifiers, parseModifiers());
@@ -356,9 +356,9 @@ public final class Parser {
             return parseFunction(annotations, modifiers, Ast.CallableKind.ROUTINE);
         }
         if (match(CONTRACT)) {
-            validateOnlyVisibilityModifiers(modifiers, "contracts");
+            validateContractModifiers(modifiers);
             rejectCallableStructuralAnnotation(annotations, "contract declarations");
-            return parseContract(modifiers.visibility);
+            return parseContract(modifiers.visibility, modifiers.isStatic);
         }
         if (match(INTERFACE)) {
             validateOnlyVisibilityModifiers(modifiers, "interfaces");
@@ -445,7 +445,16 @@ public final class Parser {
         String name = consume(IDENT, "expected class name").lexeme();
         List<String> generics = parseGenericParameters();
         List<Ast.TypeRef> parents = match(EXTENDS) ? parseTypeRefList() : List.of();
-        List<Ast.TypeRef> interfaces = match(IMPLEMENTS, IMPL) ? parseTypeRefList() : List.of();
+        List<Ast.TypeRef> interfaces = new ArrayList<>();
+        List<Ast.TypeRef> staticContracts = new ArrayList<>();
+        if (match(IMPLEMENTS, IMPL)) {
+            do {
+                boolean staticSide = match(STATIC);
+                Ast.TypeRef implemented = parseTypeRef();
+                if (staticSide) staticContracts.add(implemented);
+                else interfaces.add(implemented);
+            } while (match(COMMA));
+        }
         consume(AS, "expected 'as' after class header");
         boolean braceStyle = match(LBRACE);
         Token.Type classTerminator = braceStyle ? RBRACE : END;
@@ -484,12 +493,12 @@ public final class Parser {
             }
             if (isBindingKind(peek().type())) {
                 validateClassFieldModifiers(mods);
-                fields.add(parseField(annotations, mods.visibility));
+                fields.add(parseField(annotations, mods.visibility, mods.isStatic));
                 continue;
             }
             if (check(IDENT) && checkNext(COLON)) {
                 validateClassFieldModifiers(mods);
-                fields.add(parseColonField(annotations, mods.visibility));
+                fields.add(parseColonField(annotations, mods.visibility, mods.isStatic));
                 continue;
             }
 
@@ -518,7 +527,7 @@ public final class Parser {
                         : "expected 'end' to close class " + name);
         return new Ast.ClassDecl(
                 name, visibility, isAbstract, Ast.ActorKind.NONE, generics,
-                parents, interfaces, fields, constructor, methods);
+                parents, interfaces, staticContracts, fields, constructor, methods);
     }
 
     private Ast.ConstructorDecl parseConstructor(
@@ -572,8 +581,15 @@ public final class Parser {
 
     private void validateClassFieldModifiers(Modifiers modifiers) {
         if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.trapped
-                || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
-            throw error(peek(), "class fields accept only private/pub visibility modifiers");
+                || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
+            throw error(peek(), "class fields accept only private/pub visibility and static modifiers");
+        }
+    }
+
+    private void validateContractModifiers(Modifiers modifiers) {
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.trapped
+                || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
+            throw error(previous(), "contracts accept only private/pub visibility and optional static target");
         }
     }
 
@@ -673,14 +689,18 @@ public final class Parser {
         }
     }
 
-    private Ast.InterfaceDecl parseContract(Ast.Visibility visibility) {
-        Ast.InterfaceDecl iface = parseInterface(visibility, true);
-        return new Ast.InterfaceDecl(iface.name(), iface.visibility(), iface.genericParameters(), iface.parents(), iface.members(), true);
+    private Ast.InterfaceDecl parseContract(Ast.Visibility visibility, boolean staticContract) {
+        return parseInterface(visibility, true, staticContract);
     }
 
-    private Ast.InterfaceDecl parseInterface(Ast.Visibility visibility) { return parseInterface(visibility, false); }
+    private Ast.InterfaceDecl parseInterface(Ast.Visibility visibility) {
+        return parseInterface(visibility, false, false);
+    }
 
-    private Ast.InterfaceDecl parseInterface(Ast.Visibility visibility, boolean moduleContract) {
+    private Ast.InterfaceDecl parseInterface(
+            Ast.Visibility visibility,
+            boolean moduleContract,
+            boolean staticContract) {
         String name = consume(IDENT, "expected interface name").lexeme();
         List<String> generics = parseGenericParameters();
         List<Ast.TypeRef> parents = match(EXTENDS) ? parseTypeRefList() : List.of();
@@ -722,7 +742,10 @@ public final class Parser {
                         "interface-field annotations are not represented by the current AST and must not be silently discarded");
             }
 
-            Ast.BindingKind fieldBindingKind = Ast.BindingKind.VAL;
+            // Unqualified contract fields require a readable member of the
+            // requested type. Spelling const/val/let strengthens the contract
+            // to require that exact binding kind.
+            Ast.BindingKind fieldBindingKind = moduleContract ? null : Ast.BindingKind.VAL;
             if (moduleContract && isBindingKind(peek().type())) fieldBindingKind = parseBindingKind();
 
             if (check(IDENT) && checkNext(COLON)) {
@@ -742,7 +765,8 @@ public final class Parser {
         }
 
         consume(terminator, braceStyle ? "expected '}' to close interface " + name : "expected 'end' to close interface " + name);
-        return new Ast.InterfaceDecl(name, visibility, generics, parents, members, moduleContract);
+        return new Ast.InterfaceDecl(
+                name, visibility, generics, parents, members, moduleContract, staticContract);
     }
 
     private List<Ast.TypeRef> parseTypeRefList() {
@@ -752,11 +776,22 @@ public final class Parser {
     }
 
     private Ast.FieldDecl parseField(List<Ast.Annotation> annotations, Ast.Visibility visibility) {
+        return parseField(annotations, visibility, false);
+    }
+
+    private Ast.FieldDecl parseField(
+            List<Ast.Annotation> annotations,
+            Ast.Visibility visibility,
+            boolean isStatic) {
         rejectCallableStructuralAnnotation(annotations, "fields");
         Ast.BindingKind kind = parseBindingKind();
         Ast.TypeRef type = null;
         String name;
-        if (check(IDENT) && checkNext(EQUAL)) {
+        if (check(IDENT) && checkNext(COLON)) {
+            name = advance().lexeme();
+            consume(COLON, "expected ':' after field name");
+            type = parseTypeRef();
+        } else if (check(IDENT) && checkNext(EQUAL)) {
             name = advance().lexeme();
         } else {
             type = parseTypeRef();
@@ -768,10 +803,17 @@ public final class Parser {
         }
         consumeExpressionStatementTerminator(initializer, "field declaration should end with ';'");
         if (type != null) type = applyTypeMetadataAnnotations(type, annotations, false);
-        return new Ast.FieldDecl(name, visibility, kind, type, annotations, initializer);
+        return new Ast.FieldDecl(name, visibility, kind, type, annotations, isStatic, initializer);
     }
 
     private Ast.FieldDecl parseColonField(List<Ast.Annotation> annotations, Ast.Visibility visibility) {
+        return parseColonField(annotations, visibility, false);
+    }
+
+    private Ast.FieldDecl parseColonField(
+            List<Ast.Annotation> annotations,
+            Ast.Visibility visibility,
+            boolean isStatic) {
         rejectCallableStructuralAnnotation(annotations, "fields");
         String name = consume(IDENT, "expected field name").lexeme();
         consume(COLON, "expected ':' after field name");
@@ -780,7 +822,7 @@ public final class Parser {
         Ast.BindingKind kind = hasAnnotation(annotations, "FromJson") ? Ast.BindingKind.LET : Ast.BindingKind.VAL;
         type = applyTypeMetadataAnnotations(type, annotations, false);
         consumeExpressionClassFieldTerminator(initializer, "field declaration should end with ';'");
-        return new Ast.FieldDecl(name, visibility, kind, type, annotations, initializer);
+        return new Ast.FieldDecl(name, visibility, kind, type, annotations, isStatic, initializer);
     }
 
     private Ast.FieldDecl parseModuleBinding(List<Ast.Annotation> annotations, Ast.Visibility visibility) {
@@ -1545,7 +1587,7 @@ public final class Parser {
 
         List<Ast.SelectArm> arms = new ArrayList<>();
         while (!check(RBRACE) && !check(EOF)) {
-            if (matchContextualKeyword("when", "case")) {
+            if (match(CASE, WHEN)) {
                 Ast.ChannelOperation operation;
                 Ast.Expr channel;
                 Ast.Expr value = null;
@@ -2224,7 +2266,7 @@ public final class Parser {
         List<Ast.MatchArm> arms = new ArrayList<>();
         while (!check(END) && !check(EOF)) {
             Ast.Pattern pattern = match(ELSE) ? new Ast.WildcardPattern() : parsePattern();
-            Ast.Expr guard = matchContextualKeyword("when") ? parseExpression() : null;
+            Ast.Expr guard = match(WHEN) ? parseExpression() : null;
             if (check(FAT_ARROW)) {
                 throw error(peek(), "match implementations use the slim arrow '->'; '=>' is reserved for type definitions");
             }
@@ -2279,7 +2321,7 @@ public final class Parser {
         boolean sawDefault = false;
 
         while (!check(END) && !check(EOF)) {
-            if (matchContextualKeyword("case")) {
+            if (match(CASE)) {
                 if (sawDefault) throw error(previous(), "switch case cannot appear after default");
                 List<Ast.Expr> constants = new ArrayList<>();
                 do constants.add(parseExpression()); while (match(COMMA));
@@ -2596,7 +2638,7 @@ public final class Parser {
     private Ast.DynamicSelectExpr parseDynamicSelect(Ast.WaitMode mode) {
         Ast.SelectPolicy policy = parseSelectPolicy();
         consume(FROM,
-                "dynamic select requires 'select from cases'; static select uses 'select { when ... }'");
+                "dynamic select requires 'select from cases'; static select uses 'select { case ... }'");
         Ast.Expr cases = parseUnary();
         return new Ast.DynamicSelectExpr(mode, policy, cases);
     }
@@ -3097,25 +3139,6 @@ public final class Parser {
         if (check(IDENT) && peek().lexeme().equals("shared")) {
             advance();
             return true;
-        }
-        return false;
-    }
-
-    /**
-     * Matches words that are keywords only in a specific grammar position.
-     *
-     * <p>{@code case} and {@code when} intentionally lex as IDENT so they remain
-     * legal variable/parameter names. Grammar productions opt into their keyword
-     * meaning explicitly at switch/select arms and match guards.</p>
-     */
-    private boolean matchContextualKeyword(String... keywords) {
-        if (!check(IDENT)) return false;
-        String lexeme = peek().lexeme();
-        for (String keyword : keywords) {
-            if (lexeme.equals(keyword)) {
-                advance();
-                return true;
-            }
         }
         return false;
     }
