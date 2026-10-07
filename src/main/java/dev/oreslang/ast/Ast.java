@@ -194,7 +194,6 @@ public final class Ast {
             boolean generator,
             boolean structural,
             boolean nonLexical,
-            boolean pure,
             boolean trapped,
             ActorKind actorKind,
             List<String> genericParameters,
@@ -213,7 +212,7 @@ public final class Ast {
                             boolean generator, boolean nonLexical, ActorKind actorKind,
                             List<String> genericParameters, List<Param> parameters,
                             TypeRef returnType, List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, generator, false, nonLexical, false, false, actorKind,
+            this(name, kind, visibility, async, generator, false, nonLexical, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
@@ -223,7 +222,7 @@ public final class Ast {
                             ActorKind actorKind, List<String> genericParameters,
                             List<Param> parameters, TypeRef returnType,
                             List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, generator, structural, nonLexical, false, false, actorKind,
+            this(name, kind, visibility, async, generator, structural, nonLexical, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
@@ -232,27 +231,27 @@ public final class Ast {
                             boolean nonLexical, ActorKind actorKind, List<String> genericParameters,
                             List<Param> parameters, TypeRef returnType, List<Annotation> annotations,
                             List<Stmt> body) {
-            this(name, kind, visibility, async, false, false, nonLexical, false, false, actorKind,
+            this(name, kind, visibility, async, false, false, nonLexical, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
         public FunctionDecl(String name, CallableKind kind, Visibility visibility, boolean async,
                             ActorKind actorKind, List<String> genericParameters, List<Param> parameters,
                             TypeRef returnType, List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, false, false, false, false, false, actorKind,
+            this(name, kind, visibility, async, false, false, false, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
         public FunctionDecl(String name, CallableKind kind, Visibility visibility, boolean async,
                             List<String> genericParameters, List<Param> parameters, TypeRef returnType,
                             List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, false, false, false, false, false, ActorKind.NONE,
+            this(name, kind, visibility, async, false, false, false, false, ActorKind.NONE,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
         public FunctionDecl(String name, Visibility visibility, boolean async, List<String> genericParameters,
                             List<Param> parameters, TypeRef returnType, List<Annotation> annotations, List<Stmt> body) {
-            this(name, CallableKind.FNC, visibility, async, false, false, false, false, false, ActorKind.NONE,
+            this(name, CallableKind.FNC, visibility, async, false, false, false, false, ActorKind.NONE,
                     genericParameters, parameters, returnType, annotations, body);
         }
     }
@@ -656,11 +655,28 @@ public final class Ast {
         }
     }
 
+    /**
+     * Static select carries an explicitDo source marker for result-discarding
+     * dispatch. Historical select/nb select statement syntax remains accepted;
+     * callers that intentionally want side effects use "do select".
+     */
     public record SelectStmt(
             WaitMode mode,
             SelectPolicy policy,
-            List<SelectArm> arms) implements Stmt {
+            List<SelectArm> arms,
+            boolean explicitDo) implements Stmt {
+        public SelectStmt(WaitMode mode, SelectPolicy policy, List<SelectArm> arms) {
+            this(mode, policy, arms, false);
+        }
+
         public SelectStmt {
+            if (mode == null || policy == null) {
+                throw new IllegalArgumentException("select mode and policy are required");
+            }
+            if (explicitDo && mode == WaitMode.IMMEDIATE) {
+                throw new IllegalArgumentException(
+                        "'do try select' is not supported; use 'try select' for an immediate probe");
+            }
             arms = List.copyOf(arms);
             if (arms.isEmpty()) throw new IllegalArgumentException("select requires at least one arm");
             long defaults = arms.stream().filter(arm -> arm.operation() == ChannelOperation.DEFAULT).count();
@@ -822,15 +838,7 @@ public final class Ast {
         public ObjectExpr { fields = List.copyOf(fields); }
     }
 
-    public record LambdaExpr(
-            List<Param> parameters,
-            Expr expressionBody,
-            List<Stmt> blockBody,
-            boolean nonLexical,
-            TypeRef returnType,
-            boolean async,
-            boolean pure,
-            boolean trapped) implements Expr {
+    public record LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody, boolean nonLexical) implements Expr {
         public LambdaExpr {
             parameters = List.copyOf(parameters);
             blockBody = blockBody == null ? null : List.copyOf(blockBody);
@@ -840,17 +848,7 @@ public final class Ast {
             }
         }
         public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody) {
-            this(parameters, expressionBody, blockBody, false, null, false, false, false);
-        }
-        public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody, boolean nonLexical) {
-            this(parameters, expressionBody, blockBody, nonLexical, null, false, false, false);
-        }
-        public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody, boolean nonLexical, TypeRef returnType) {
-            this(parameters, expressionBody, blockBody, nonLexical, returnType, false, false, false);
-        }
-        public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody,
-                          boolean nonLexical, TypeRef returnType, boolean async) {
-            this(parameters, expressionBody, blockBody, nonLexical, returnType, async, false, false);
+            this(parameters, expressionBody, blockBody, false);
         }
     }
 }
