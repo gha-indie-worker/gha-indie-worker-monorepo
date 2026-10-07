@@ -65,6 +65,7 @@ public final class TypeChecker {
 
     public static Ast.Program check(Ast.Program program) {
         program = checkTypes(program);
+        PureEffectChecker.check(program);
         OwnershipChecker.check(program);
         return program;
     }
@@ -408,6 +409,10 @@ public final class TypeChecker {
     }
 
     private void checkFunction(String module, Ast.FunctionDecl fn) {
+        if (fn.pure() && fn.generator()) {
+            throw new IllegalArgumentException(
+                    "pure generators are not enabled until yield/suspension effects participate in purity");
+        }
         if (fn.trapped()) {
             if (fn.async()) {
                 throw new IllegalArgumentException("async trap callables are not enabled until the trap boundary spans every await");
@@ -426,6 +431,7 @@ public final class TypeChecker {
                     || fn.generator()
                     || fn.structural()
                     || fn.nonLexical()
+                    || fn.pure()
                     || fn.trapped()
                     || fn.actorKind() != Ast.ActorKind.NONE
                     || !fn.genericParameters().isEmpty()
@@ -459,7 +465,7 @@ public final class TypeChecker {
         Set<String> generics = uniqueGenerics(
                 fn.genericParameters(),
                 (fn.kind() == Ast.CallableKind.ROUTINE ? "routine " : "function ") + fn.name());
-        Env env = new Env(moduleBindingEnv(module), fn.nonLexical());
+        Env env = new Env(fn.nonLexical() ? null : moduleBindingEnv(module), fn.nonLexical());
         for (Ast.Param param : fn.parameters()) {
             Type parameterType = resolveParam(param, generics, null);
             if (param.structural() && fn.actorKind() != Ast.ActorKind.NONE) {
@@ -1040,12 +1046,16 @@ public final class TypeChecker {
     }
 
     private void checkCallableBlock(List<Ast.Stmt> body, Env parent, Set<String> generics, Type expectedReturn, Type self) {
+        checkCallableBlock(body, parent, generics, expectedReturn, self, false);
+    }
+
+    private void checkCallableBlock(List<Ast.Stmt> body, Env parent, Set<String> generics, Type expectedReturn, Type self, boolean async) {
         int previousLoopDepth = loopDepth;
         boolean previousGenerator = currentGenerator;
         boolean previousAsync = currentAsyncCallable;
         loopDepth = 0;
         currentGenerator = false;
-        currentAsyncCallable = false;
+        currentAsyncCallable = async;
         try {
             checkBlock(body, parent, generics, expectedReturn, self);
         } finally {
@@ -1312,11 +1322,16 @@ public final class TypeChecker {
             }
             if (name.name().equals("print")) return new Function(List.of(Unknown.INSTANCE), Primitive.VOID);
             if (name.name().equals("None")) return new Named("Option", List.of(Unknown.INSTANCE));
+            if (importedValues.contains(name.name())) return Unknown.INSTANCE;
+            if (env.outerDeclarationsBlocked()) {
+                throw new IllegalArgumentException(
+                        "nlex callable cannot resolve outer declaration '" + name.name()
+                                + "'; import it explicitly or pass it as a parameter");
+            }
             Ast.ModuleDecl moduleNamespace = modules.get(name.name());
             if (moduleNamespace != null) return moduleShape(moduleNamespace);
             Ast.ClassDecl classNamespace = findClass(name.name());
             if (classNamespace != null) return new ClassNamespace(qualifiedClassName(classNamespace));
-            if (importedValues.contains(name.name())) return Unknown.INSTANCE;
             Ast.FunctionDecl fn = findSingleFunction(name.name());
             if (fn != null) {
                 if (fn.actorKind() != Ast.ActorKind.NONE) {
@@ -1522,7 +1537,8 @@ public final class TypeChecker {
                         "module init is a lifecycle hook and cannot be called directly; startup invokes it exactly once");
             }
             if (call.callee() instanceof Ast.NameExpr functionName
-                    && env.lookup(functionName.name()) == null) {
+                    && env.lookup(functionName.name()) == null
+                    && !env.outerDeclarationsBlocked()) {
                 Ast.FunctionDecl target = findFunction(functionName.name(), call.arguments().size());
                 if (target != null) {
                     if (target.actorKind() != Ast.ActorKind.NONE
@@ -1553,6 +1569,7 @@ public final class TypeChecker {
             if (call.callee() instanceof Ast.MemberExpr qualifiedCall
                     && qualifiedCall.receiver() instanceof Ast.NameExpr namespace
                     && env.lookup(namespace.name()) == null
+                    && !env.outerDeclarationsBlocked()
                     && modules.containsKey(namespace.name())) {
                 Ast.FunctionDecl target = findQualifiedFunction(
                         namespace.name() + "." + qualifiedCall.member(),
@@ -1967,7 +1984,7 @@ public final class TypeChecker {
                         Type callableReceiver = receiverValueType instanceof SelfType
                                 ? receiverValueType
                                 : named;
-                        Type result = checkGenericCallable(
+                        return checkGenericCallable(
                                 callableGenerics,
                                 method.parameters(),
                                 method.returnType(),
@@ -1976,17 +1993,6 @@ public final class TypeChecker {
                                 callableReceiver,
                                 bindings,
                                 label);
-                        boolean remoteActor = klass.actorKind() != Ast.ActorKind.NONE
-                                && !(receiverValueType instanceof SelfType);
-                        if (remoteActor) {
-                            for (Ast.Expr argument : call.arguments()) {
-                                validateActorCallableBoundaryType(typeOf(argument, env, generics, self),
-                                        klass.actorKind(), false, "actor method argument");
-                            }
-                            validateActorCallableBoundaryType(result, klass.actorKind(), true, "actor method result");
-                            return new Named("Future", List.of(result));
-                        }
-                        return callableResult(method.async(), false, result);
                     }
 
                     Ast.InterfaceDecl iface = findInterface(named.name());
@@ -2049,6 +2055,7 @@ public final class TypeChecker {
             }
             if (member.receiver() instanceof Ast.NameExpr namespace
                     && env.lookup(namespace.name()) == null
+                    && !env.outerDeclarationsBlocked()
                     && modules.containsKey(namespace.name())) {
                 Ast.FunctionDecl moduleFunction = findSingleQualifiedFunction(
                         namespace.name() + "." + member.member());
@@ -2180,10 +2187,6 @@ public final class TypeChecker {
                 if (klass != null) {
                     ResolvedField field = findFieldTarget(klass, named, member.member(), new LinkedHashSet<>());
                     if (field != null) {
-                        if (klass.actorKind() != Ast.ActorKind.NONE
-                                && !(member.receiver() instanceof Ast.NameExpr n && n.name().equals("self"))) {
-                            throw new IllegalArgumentException("actor state is accessible only through self inside its mailbox turn");
-                        }
                         requireClassMemberVisible(
                                 field.field().visibility(), field.owner(), "field", field.field().name());
                         Type pattern = classFieldType(field.owner(), field.field());
@@ -2239,7 +2242,7 @@ public final class TypeChecker {
             throw new IllegalArgumentException("indexing requires an array/list, tuple, or DynamicStruct");
         }
         if (expr instanceof Ast.NewExpr created) {
-            if (!created.actorSpawn() && created.type().name().equals("DynamicStruct")) {
+            if (created.type().name().equals("DynamicStruct")) {
                 Type dynamic = resolve(created.type(), generics, self);
                 if (!created.arguments().isEmpty()) {
                     throw new IllegalArgumentException("DynamicStruct<T> constructor takes no positional arguments");
@@ -2247,22 +2250,18 @@ public final class TypeChecker {
                 return dynamic;
             }
             Ast.ClassDecl klass = findClass(created.type().name());
-            if (created.actorSpawn()) {
-                if (klass == null || klass.actorKind() == Ast.ActorKind.NONE) {
-                    throw new IllegalArgumentException("spawn requires a declared actor: " + created.type().name());
-                }
-                for (Ast.Expr argument : created.arguments()) {
-                    validateActorCallableBoundaryType(typeOf(argument, env, generics, self),
-                            klass.actorKind(), false, "spawn argument");
-                }
-            }
             if (klass == null) return resolve(created.type(), generics, self);
+            if (env.outerDeclarationsBlocked()) {
+                throw new IllegalArgumentException(
+                        "nlex callable cannot construct outer class '" + klass.name()
+                                + "'; import it explicitly or pass a constructed value");
+            }
             if (klass.isAbstract()) {
                 throw new IllegalArgumentException("cannot instantiate abstract class '" + klass.name() + "'");
             }
-            if (klass.actorKind() != Ast.ActorKind.NONE && !created.actorSpawn()) {
+            if (klass.actorKind() != Ast.ActorKind.NONE) {
                 throw new IllegalArgumentException("actor '" + klass.name()
-                        + "' cannot be constructed with new; use spawn " + klass.name() + "(...)");
+                        + "' cannot be constructed with new; actor instances must be created through the actor runtime");
             }
 
             Named nominal;
@@ -2421,28 +2420,51 @@ public final class TypeChecker {
             return new Record(members);
         }
         if (expr instanceof Ast.LambdaExpr lambda) {
-            boolean nonLexical = lambda.nonLexical() || env.descendantsNonLexical();
+            if (lambda.trapped() && lambda.async()) {
+                throw new IllegalArgumentException(
+                        "async trap lambda is not enabled until trap spans every await suspension");
+            }
+            boolean nonLexical = lambda.nonLexical();
             Env lambdaEnv = new Env(nonLexical ? null : env, nonLexical);
             List<Type> parameters = new ArrayList<>();
             for (Ast.Param param : lambda.parameters()) {
+                if (lambda.async() && (param.mutable() || param.structural())) {
+                    throw new IllegalArgumentException("async lambda parameters must not be mutable or structural until task-safe ownership transfer is available");
+                }
                 Type type = resolveParam(param, generics, self);
                 parameters.add(type);
                 lambdaEnv.define(param.name(), type, param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL);
             }
             Ast.ClassDecl previousClassOwner = currentClassOwner;
+            boolean previousAsync = currentAsyncCallable;
             if (nonLexical) currentClassOwner = null;
+            currentAsyncCallable = lambda.async();
+            Type declaredReturn = lambda.returnType() == null
+                    ? null : resolve(lambda.returnType(), generics, self);
             Type result;
             try {
                 if (lambda.expressionBody() != null) {
                     result = typeOf(lambda.expressionBody(), lambdaEnv, generics, self);
+                    if (declaredReturn != null) requireAssignable(result, declaredReturn, "lambda expression return");
                 } else {
-                    checkCallableBlock(lambda.blockBody(), lambdaEnv, generics, Unknown.INSTANCE, self);
-                    result = Unknown.INSTANCE;
+                    checkCallableBlock(lambda.blockBody(), lambdaEnv, generics,
+                            declaredReturn == null ? Unknown.INSTANCE : declaredReturn, self, lambda.async());
+                    if (declaredReturn != null && declaredReturn != Primitive.VOID
+                            && !definitelyReturns(lambda.blockBody())) {
+                        throw new IllegalArgumentException("non-void typed lambda must return on every path");
+                    }
+                    result = declaredReturn == null ? Unknown.INSTANCE : declaredReturn;
                 }
             } finally {
                 currentClassOwner = previousClassOwner;
+                currentAsyncCallable = previousAsync;
             }
-            return new Function(parameters, result);
+            Type returnType = declaredReturn == null ? result : declaredReturn;
+            Type callableReturn = callableResult(lambda.async(), false, returnType);
+            callableReturn = trapResult(lambda.trapped(), callableReturn);
+            return new Function(parameters,
+                    lambda.parameters().stream().map(Ast.Param::mutable).toList(),
+                    lambda.async(), callableReturn);
         }
         return Unknown.INSTANCE;
     }
@@ -2883,11 +2905,13 @@ public final class TypeChecker {
         Type declared = param.type().name().equals("$infer$") ? expectedParameter : resolveParam(param, generics, self);
         requireAssignable(expectedParameter, declared, "mutex callback parameter " + param.name());
         requireAssignable(declared, expectedParameter, "mutex callback parameter " + param.name());
-        boolean nonLexical = lambda.nonLexical() || parent.descendantsNonLexical();
+        boolean nonLexical = lambda.nonLexical();
         Env lambdaEnv = new Env(nonLexical ? null : parent, nonLexical);
         lambdaEnv.define(param.name(), declared, param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL);
         Ast.ClassDecl previousClassOwner = currentClassOwner;
+        boolean previousAsync = currentAsyncCallable;
         if (nonLexical) currentClassOwner = null;
+        currentAsyncCallable = lambda.async();
         try {
             if (lambda.expressionBody() != null) {
                 Type actual = typeOfAgainstExpected(
@@ -2898,6 +2922,7 @@ public final class TypeChecker {
             }
         } finally {
             currentClassOwner = previousClassOwner;
+            currentAsyncCallable = previousAsync;
         }
     }
 
@@ -2909,10 +2934,40 @@ public final class TypeChecker {
     }
 
     private void validateLambdaAgainstExpected(Ast.LambdaExpr lambda, Function expected, Env parent, Set<String> generics, Type self) {
+        if (lambda.trapped() && lambda.async()) {
+            throw new IllegalArgumentException(
+                    "async trap lambda is not enabled until trap spans every await suspension");
+        }
+        if (lambda.async() != expected.async()) {
+            throw new IllegalArgumentException("async lambda effect does not match expected callable signature");
+        }
+
+        Type bodyExpected = expected.result();
+        if (expected.async()
+                && bodyExpected instanceof Named future
+                && future.name().equals("Future")
+                && future.arguments().size() == 1) {
+            bodyExpected = future.arguments().getFirst();
+        }
+        if (lambda.trapped()) {
+            if (!(bodyExpected instanceof Named option)
+                    || !option.name().equals("Option")
+                    || option.arguments().size() != 1) {
+                throw new IllegalArgumentException(
+                        "trap lambda requires an expected Option<T> callable result");
+            }
+            bodyExpected = option.arguments().getFirst();
+        }
+
+        if (lambda.returnType() != null) {
+            Type declared = resolve(lambda.returnType(), generics, self);
+            requireAssignable(declared, bodyExpected, "typed lambda return");
+            requireAssignable(bodyExpected, declared, "typed lambda expected return");
+        }
         if (lambda.parameters().size() != expected.parameters().size()) {
             throw new IllegalArgumentException("lambda arity " + lambda.parameters().size() + " does not match expected function arity " + expected.parameters().size());
         }
-        boolean nonLexical = lambda.nonLexical() || parent.descendantsNonLexical();
+        boolean nonLexical = lambda.nonLexical();
         Env lambdaEnv = new Env(nonLexical ? null : parent, nonLexical);
         for (int i = 0; i < lambda.parameters().size(); i++) {
             Ast.Param param = lambda.parameters().get(i);
@@ -2928,20 +2983,23 @@ public final class TypeChecker {
             lambdaEnv.define(param.name(), declared, param.mutable() ? Ast.BindingKind.LET : Ast.BindingKind.VAL);
         }
         Ast.ClassDecl previousClassOwner = currentClassOwner;
+        boolean previousAsync = currentAsyncCallable;
         if (nonLexical) currentClassOwner = null;
+        currentAsyncCallable = lambda.async();
         try {
             if (lambda.expressionBody() != null) {
                 Type actual = typeOfAgainstExpected(
-                        lambda.expressionBody(), expected.result(), lambdaEnv, generics, self);
-                requireAssignable(actual, expected.result(), "lambda expression body");
+                        lambda.expressionBody(), bodyExpected, lambdaEnv, generics, self);
+                requireAssignable(actual, bodyExpected, "lambda expression body");
             } else {
-                checkCallableBlock(lambda.blockBody(), lambdaEnv, generics, expected.result(), self);
+                checkCallableBlock(lambda.blockBody(), lambdaEnv, generics, bodyExpected, self, lambda.async());
             }
         } finally {
             currentClassOwner = previousClassOwner;
+            currentAsyncCallable = previousAsync;
         }
         if (lambda.blockBody() != null
-                && expected.result() != Primitive.VOID
+                && bodyExpected != Primitive.VOID
                 && !definitelyReturns(lambda.blockBody())) {
             throw new IllegalArgumentException("non-void block lambda must explicitly return on every path");
         }
@@ -3000,10 +3058,6 @@ public final class TypeChecker {
             if (klass != null) {
                 ResolvedField field = findFieldTarget(klass, named, member.member(), new LinkedHashSet<>());
                 if (field != null) {
-                    if (klass.actorKind() != Ast.ActorKind.NONE
-                            && !(member.receiver() instanceof Ast.NameExpr n && n.name().equals("self"))) {
-                        throw new IllegalArgumentException("actor state is accessible only through self inside its mailbox turn");
-                    }
                     requireClassMemberVisible(
                             field.field().visibility(), field.owner(), "field", field.field().name());
                     Type pattern = resolve(field.field().type(), Set.copyOf(field.owner().genericParameters()), field.ownerType());
@@ -5790,13 +5844,17 @@ public final class TypeChecker {
     private static final class Env {
         private final Env parent;
         private final boolean descendantsNonLexical;
+        private final boolean outerDeclarationsBlocked;
         private final Map<String, Binding> bindings = new HashMap<>();
         private Env(Env parent) { this(parent, parent != null && parent.descendantsNonLexical); }
         private Env(Env parent, boolean descendantsNonLexical) {
             this.parent = parent;
             this.descendantsNonLexical = descendantsNonLexical;
+            this.outerDeclarationsBlocked = descendantsNonLexical
+                    || (parent != null && parent.outerDeclarationsBlocked);
         }
         private boolean descendantsNonLexical() { return descendantsNonLexical; }
+        private boolean outerDeclarationsBlocked() { return outerDeclarationsBlocked; }
         private void define(String name, Type type, Ast.BindingKind kind) {
             if (bindings.putIfAbsent(name, new Binding(type, kind)) != null) throw new IllegalArgumentException("duplicate binding '" + name + "'");
         }

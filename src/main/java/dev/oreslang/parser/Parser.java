@@ -92,17 +92,11 @@ public final class Parser {
 
             if (match(DEFINE)) {
                 modifiers = mergeModifiers(modifiers, parseModifiers());
-                if (actorDeclarationStartsHere()) {
-                    Ast.Decl actor = parseDeclarationAfterModifiers(annotations, modifiers);
-                    if (actor == null) throw error(peek(), "expected actor declaration after 'define'");
-                    rootDeclarations.add(actor);
-                    continue;
-                }
-                if (modifiers.shared || modifiers.untrusted) {
-                    throw error(previous(), "actor-kind modifiers must modify an actor declaration");
+                if (modifiers.shared) {
+                    throw error(previous(), "'shared' must modify an actor declaration; use 'shared actor <Name>'");
                 }
                 if (match(MODULE)) {
-                    if (modifiers.visibilitySeen || modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.trapped
+                    if (modifiers.visibilitySeen || modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                             || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
                         throw error(previous(), "modules do not accept declaration modifiers");
                     }
@@ -273,13 +267,8 @@ public final class Parser {
 
         if (match(DEFINE)) {
             modifiers = mergeModifiers(modifiers, parseModifiers());
-            if (actorDeclarationStartsHere()) {
-                Ast.Decl actor = parseDeclarationAfterModifiers(annotations, modifiers);
-                if (actor == null) throw error(peek(), "expected actor declaration after 'define'");
-                return actor;
-            }
             if (modifiers.shared || modifiers.untrusted) {
-                throw error(previous(), "actor-kind modifiers must modify an actor declaration");
+                throw error(previous(), "'shared'/'untrusted' must modify an actor declaration");
             }
             if (match(CONTRACT)) {
                 modifiers = mergeModifiers(modifiers, parseModifiers());
@@ -312,10 +301,9 @@ public final class Parser {
         if (isLegacyFnSpelling()) {
             throw error(peek(), "functions are declared with 'fnc', not 'fn'");
         }
-        ActorMarker leadingActorMarker = matchActorMarker();
-        if (leadingActorMarker != null) {
-            Token actorToken = leadingActorMarker.token();
-            boolean isolated = leadingActorMarker.isolated();
+        if (match(ACTOR, ISOACTOR)) {
+            Token actorToken = previous();
+            boolean isolated = actorToken.type() == ISOACTOR;
             modifiers = mergeModifiers(modifiers, parseModifiers());
 
             if (isLegacyFnSpelling()) {
@@ -333,7 +321,7 @@ public final class Parser {
             }
 
             Ast.ActorKind actorKind = resolveActorKind(actorToken, isolated, modifiers);
-            if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.trapped
+            if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                     || modifiers.isStatic || modifiers.isAbstract) {
                 throw error(actorToken, "actor class declarations accept only visibility and actor-kind modifiers");
             }
@@ -342,10 +330,9 @@ public final class Parser {
         }
         if (match(FNC)) {
             modifiers = mergeModifiers(modifiers, parseModifiers());
-            ActorMarker callableActorMarker = matchActorMarker();
-            if (callableActorMarker != null) {
-                Token actorToken = callableActorMarker.token();
-                boolean isolated = callableActorMarker.isolated();
+            if (match(ACTOR, ISOACTOR)) {
+                Token actorToken = previous();
+                boolean isolated = actorToken.type() == ISOACTOR;
                 modifiers = mergeModifiers(modifiers, parseModifiers());
                 Ast.ActorKind actorKind = resolveActorKind(actorToken, isolated, modifiers);
                 return parseFunction(annotations, modifiers, Ast.CallableKind.FNC, actorKind);
@@ -357,10 +344,9 @@ public final class Parser {
         }
         if (match(ROUTINE)) {
             modifiers = mergeModifiers(modifiers, parseModifiers());
-            ActorMarker callableActorMarker = matchActorMarker();
-            if (callableActorMarker != null) {
-                Token actorToken = callableActorMarker.token();
-                boolean isolated = callableActorMarker.isolated();
+            if (match(ACTOR, ISOACTOR)) {
+                Token actorToken = previous();
+                boolean isolated = actorToken.type() == ISOACTOR;
                 modifiers = mergeModifiers(modifiers, parseModifiers());
                 Ast.ActorKind actorKind = resolveActorKind(actorToken, isolated, modifiers);
                 return parseFunction(annotations, modifiers, Ast.CallableKind.ROUTINE, actorKind);
@@ -392,28 +378,11 @@ public final class Parser {
         return null;
     }
 
-    private record ActorMarker(Token token, boolean isolated) { }
-
-    private boolean actorDeclarationStartsHere() {
-        return check(ACTOR) || check(ISOACTOR) || isContextualIdentifier("isolated");
-    }
-
-    private ActorMarker matchActorMarker() {
-        if (match(ACTOR)) return new ActorMarker(previous(), false);
-        if (match(ISOACTOR)) return new ActorMarker(previous(), true);
-        if (isContextualIdentifier("isolated")) {
-            Token isolated = advance();
-            consume(ACTOR, "expected 'actor' after 'isolated'");
-            return new ActorMarker(isolated, true);
-        }
-        return null;
-    }
-
     private Ast.ActorKind resolveActorKind(Token actorToken, boolean isolated, Modifiers modifiers) {
         if (isolated && (modifiers.shared || modifiers.untrusted)) {
             throw error(
                     actorToken,
-                    "conflicting actor kinds; use shared actor, isolated actor, or untrusted actor");
+                    "'shared/untrusted isoactor' is contradictory; use either shared actor, untrusted actor, or isoactor");
         }
         if (modifiers.shared && modifiers.untrusted) {
             throw error(actorToken, "an actor cannot be both shared and untrusted");
@@ -456,7 +425,7 @@ public final class Parser {
                     ? Ast.TypeRef.simple("void")
                     : parseTypeRef();
             List<Ast.Stmt> body = parseBlock();
-            return new Ast.FunctionDecl(name, kind, modifiers.visibility, modifiers.async, modifiers.generator, structural.enabled(), modifiers.nonLexical, modifiers.trapped, actorKind,
+            return new Ast.FunctionDecl(name, kind, modifiers.visibility, modifiers.async, modifiers.generator, structural.enabled(), modifiers.nonLexical, modifiers.pure, modifiers.trapped, actorKind,
                     generics, params, returnType, annotations, body);
         }
 
@@ -466,7 +435,7 @@ public final class Parser {
         consume(RPAREN, "expected ')' after parameters");
         Ast.TypeRef returnType = parseReturnType(annotations);
         List<Ast.Stmt> body = parseBlock();
-        return new Ast.FunctionDecl(name, kind, modifiers.visibility, modifiers.async, modifiers.generator, structural.enabled(), modifiers.nonLexical, modifiers.trapped, actorKind, generics, params,
+        return new Ast.FunctionDecl(name, kind, modifiers.visibility, modifiers.async, modifiers.generator, structural.enabled(), modifiers.nonLexical, modifiers.pure, modifiers.trapped, actorKind, generics, params,
                 returnType, annotations, body);
     }
 
@@ -531,6 +500,7 @@ public final class Parser {
             }
             if (mods.generator) throw error(peek(), "'generator' is not permitted on class methods or static class fnc; declare a module/top-level generator fnc or routine");
             if (mods.nonLexical) throw error(peek(), "'nlex' is unnecessary on class members; methods/static fnc never capture enclosing local scopes");
+            if (mods.pure) throw error(peek(), "'pure' on class methods/static fnc is not enabled until method callable metadata carries the effect");
             if (mods.trapped) throw error(peek(), "'trap' on class methods/static fnc is not enabled until method callable metadata carries the trap effect");
             if (mods.shared || mods.untrusted) throw error(peek(), "actor-kind modifiers are not permitted on class members");
             if (mods.isStatic) {
@@ -595,7 +565,7 @@ public final class Parser {
     }
 
     private void validateClassModifiers(Modifiers modifiers) {
-        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.trapped
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                 || modifiers.isStatic || modifiers.shared || modifiers.untrusted) {
             throw error(previous(),
                     "classes accept only private/pub visibility and abstract; callable/actor modifiers are not permitted");
@@ -603,21 +573,21 @@ public final class Parser {
     }
 
     private void validateClassFieldModifiers(Modifiers modifiers) {
-        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.trapped
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                 || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
             throw error(peek(), "class fields accept only private/pub visibility modifiers");
         }
     }
 
     private void validateOnlyVisibilityModifiers(Modifiers modifiers, String context) {
-        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure
                 || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
             throw error(previous(), context + " accept only private/pub visibility modifiers");
         }
     }
 
     private void validateInterfaceCallableModifiers(Modifiers modifiers) {
-        if (modifiers.visibilitySeen || modifiers.async || modifiers.generator || modifiers.nonLexical || modifiers.trapped
+        if (modifiers.visibilitySeen || modifiers.async || modifiers.generator || modifiers.nonLexical || modifiers.pure || modifiers.trapped
                 || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
             throw error(previous(),
                     "interface callable signatures currently accept only the structural callable modifier");
@@ -626,7 +596,7 @@ public final class Parser {
 
     private void validateNoModifiers(Modifiers modifiers, String context) {
         if (modifiers.visibilitySeen || modifiers.async || modifiers.generator || modifiers.structural
-                || modifiers.nonLexical || modifiers.trapped || modifiers.isStatic || modifiers.isAbstract
+                || modifiers.nonLexical || modifiers.pure || modifiers.trapped || modifiers.isStatic || modifiers.isAbstract
                 || modifiers.shared || modifiers.untrusted) {
             throw error(previous(), context + " do not accept declaration modifiers");
         }
@@ -642,9 +612,6 @@ public final class Parser {
         List<Ast.TypeRef> parents = match(EXTENDS) ? parseTypeRefList() : List.of();
         List<Ast.TypeRef> interfaces = match(IMPLEMENTS, IMPL) ? parseTypeRefList() : List.of();
 
-        // Canonical actor syntax is "define [kind] actor Name as ... end";
-        // brace-style and pre-"as" spellings remain compatibility forms.
-        match(AS);
         boolean braceStyle = match(LBRACE);
         Token.Type terminator = braceStyle ? RBRACE : END;
         List<Ast.FieldDecl> fields = new ArrayList<>();
@@ -695,16 +662,16 @@ public final class Parser {
         if (modifiers.visibility == Ast.Visibility.PUBLIC) {
             throw error(peek(), "actor state fields are private; expose state through actor methods");
         }
-        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical
+        if (modifiers.async || modifiers.generator || modifiers.structural || modifiers.nonLexical || modifiers.pure
                 || modifiers.isStatic || modifiers.isAbstract || modifiers.shared || modifiers.untrusted) {
             throw error(peek(), "actor state fields do not accept callable/static/actor modifiers");
         }
     }
 
     private void validateActorMethodModifiers(Modifiers modifiers) {
-        if (modifiers.generator || modifiers.nonLexical || modifiers.trapped || modifiers.isAbstract
+        if (modifiers.generator || modifiers.nonLexical || modifiers.pure || modifiers.trapped || modifiers.isAbstract
                 || modifiers.shared || modifiers.untrusted) {
-            throw error(peek(), "actor methods do not accept generator, nlex, abstract, shared, or untrusted modifiers");
+            throw error(peek(), "actor methods do not accept generator, nlex, pure, trap, abstract, shared, or untrusted modifiers");
         }
     }
 
@@ -937,6 +904,7 @@ public final class Parser {
         boolean generator = false;
         boolean structural = false;
         boolean nonLexical = false;
+        boolean pure = false;
         boolean trapped = false;
         boolean isStatic = false;
         boolean isAbstract = false;
@@ -947,6 +915,7 @@ public final class Parser {
         boolean generatorSeen = false;
         boolean structuralSeen = false;
         boolean nonLexicalSeen = false;
+        boolean pureSeen = false;
         boolean trapSeen = false;
         boolean staticSeen = false;
         boolean abstractSeen = false;
@@ -986,6 +955,10 @@ public final class Parser {
                 if (nonLexicalSeen) throw error(previous(), "duplicate 'nlex' modifier");
                 nonLexicalSeen = true;
                 nonLexical = true;
+            } else if (match(PURE)) {
+                if (pureSeen) throw error(previous(), "duplicate 'pure' modifier");
+                pureSeen = true;
+                pure = true;
             } else if (match(TRAP)) {
                 if (trapSeen) throw error(previous(), "duplicate 'trap' modifier");
                 trapSeen = true;
@@ -1010,7 +983,7 @@ public final class Parser {
                 break;
             }
         }
-        return new Modifiers(visibility, visibilitySeen, async, generator, structural, nonLexical, trapped, isStatic, isAbstract, shared, untrusted);
+        return new Modifiers(visibility, visibilitySeen, async, generator, structural, nonLexical, pure, trapped, isStatic, isAbstract, shared, untrusted);
     }
 
     private Modifiers mergeModifiers(Modifiers before, Modifiers after) {
@@ -1021,6 +994,7 @@ public final class Parser {
         if (before.generator && after.generator) throw error(previous(), "duplicate 'generator' modifier");
         if (before.structural && after.structural) throw error(previous(), "duplicate 'structural' modifier");
         if (before.nonLexical && after.nonLexical) throw error(previous(), "duplicate 'nlex' modifier");
+        if (before.pure && after.pure) throw error(previous(), "duplicate 'pure' modifier");
         if (before.trapped && after.trapped) throw error(previous(), "duplicate 'trap' modifier");
         if (before.isStatic && after.isStatic) throw error(previous(), "duplicate 'static' modifier");
         if (before.isAbstract && after.isAbstract) throw error(previous(), "duplicate 'abstract' modifier");
@@ -1034,6 +1008,7 @@ public final class Parser {
                 before.generator || after.generator,
                 before.structural || after.structural,
                 before.nonLexical || after.nonLexical,
+                before.pure || after.pure,
                 before.trapped || after.trapped,
                 before.isStatic || after.isStatic,
                 before.isAbstract || after.isAbstract,
@@ -2731,7 +2706,7 @@ public final class Parser {
             case IDENT,
                     DEFINE, CLASS, MODULE, NAMESPACE, IMPORT, FROM, AS, EXTENDS, IMPLEMENTS,
                     TRY, CATCH, FINALLY, END, FI, IF, DO, ELSE, THEN,
-                    NEW, STOP, DONE, AWAIT, ASYNC, NLEX, TRAP, NB, SELECT, READCH, WRITECH, ACTOR, ISOACTOR, SPAWN, SHARED, DEF, FNC, ROUTINE, FOR, OF, LOOP, BLOCK, BREAK, CONTINUE, YIELD, SUPER, ELSEIF, SWITCH, MATCH, MATCHES, EQ, NEQ, IS, WHEN, CASE, DEFAULT, FIRST, CB, UNTRUSTED, TYPE, TYPES, TYPEOF,
+                    NEW, STOP, DONE, AWAIT, ASYNC, NLEX, PURE, TRAP, NB, SELECT, READCH, WRITECH, ACTOR, ISOACTOR, SHARED, DEF, FNC, ROUTINE, FOR, OF, LOOP, BLOCK, BREAK, CONTINUE, YIELD, SUPER, ELSEIF, SWITCH, MATCH, MATCHES, EQ, NEQ, IS, WHEN, CASE, DEFAULT, FIRST, CB, UNTRUSTED, TYPE, TYPES, TYPEOF,
                     INTERFACE, TRAIT, STRUCT, IMPL, ABSTRACT, VOID, STATIC, PUB, PRIVATE, STRUCTURAL, RETURN, DEFER,
                     VAL, CONST, LET, MUT, SELF, TRUE, FALSE, NULL, OBJ, ARR -> true;
             default -> false;
@@ -2774,13 +2749,6 @@ public final class Parser {
             consume(RPAREN, "expected ')' after constructor arguments");
             return new Ast.NewExpr(type, args);
         }
-        if (match(SPAWN)) {
-            Ast.TypeRef type = parseTypeRef();
-            consume(LPAREN, "expected '(' after actor type");
-            List<Ast.Expr> args = parseArgumentsUntil(RPAREN);
-            consume(RPAREN, "expected ')' after spawn arguments");
-            return new Ast.NewExpr(type, args, true);
-        }
         if (match(OBJ)) return parseObjectLiteral();
         if (match(ARR)) {
             consume(LBRACKET, "expected '[' after arr");
@@ -2788,13 +2756,38 @@ public final class Parser {
             consume(RBRACKET, "expected ']' after arr literal");
             return new Ast.ListExpr(items);
         }
-        if (match(NLEX)) {
-            if (check(PIPE)) return parsePipeLambda(true);
-            if (check(LPAREN) && looksLikeLambda()) return parseLambda(true);
-            throw error(previous(), "'nlex' in expression position must prefix a lambda");
+        // RHS modifier order matches named callables. Keep callable effects
+        // attached to the anonymous callable value rather than its binding.
+        if (check(NLEX) || check(PURE) || check(TRAP) || check(ASYNC)) {
+            boolean nonLexical = false;
+            boolean pure = false;
+            boolean trapped = false;
+            boolean async = false;
+            while (check(NLEX) || check(PURE) || check(TRAP) || check(ASYNC)) {
+                if (match(NLEX)) {
+                    if (nonLexical) throw error(previous(), "duplicate 'nlex' lambda modifier");
+                    nonLexical = true;
+                } else if (match(PURE)) {
+                    if (pure) throw error(previous(), "duplicate 'pure' lambda modifier");
+                    pure = true;
+                } else if (match(TRAP)) {
+                    if (trapped) throw error(previous(), "duplicate 'trap' lambda modifier");
+                    trapped = true;
+                } else if (match(ASYNC)) {
+                    if (async) throw error(previous(), "duplicate 'async' lambda modifier");
+                    async = true;
+                }
+            }
+            if (trapped && async) {
+                throw error(previous(),
+                        "async trap lambda is not enabled until trap spans every await suspension");
+            }
+            if (check(PIPE)) return parsePipeLambda(nonLexical, async, pure, trapped);
+            if (check(LPAREN) && looksLikeLambda()) return parseLambda(nonLexical, async, pure, trapped);
+            throw error(peek(), "RHS nlex/pure/trap/async modifiers must prefix a lambda");
         }
-        if (check(PIPE)) return parsePipeLambda(false);
-        if (check(LPAREN) && looksLikeLambda()) return parseLambda(false);
+        if (check(PIPE)) return parsePipeLambda(false, false, false, false);
+        if (check(LPAREN) && looksLikeLambda()) return parseLambda(false, false, false, false);
         if (match(LPAREN)) {
             Ast.Expr first = parseExpression();
             if (match(COMMA)) {
@@ -2838,15 +2831,15 @@ public final class Parser {
         return new Ast.ObjectExpr(fields);
     }
 
-    private Ast.LambdaExpr parseLambda(boolean nonLexical) {
+    private Ast.LambdaExpr parseLambda(boolean nonLexical, boolean async, boolean pure, boolean trapped) {
         consume(LPAREN, "expected '('");
         List<Ast.Param> params = parseParametersUntil(RPAREN);
         consume(RPAREN, "expected ')' after lambda parameters");
         consume(ARROW, "expected '->' after lambda parameters");
-        return parseLambdaBody(params, nonLexical);
+        return parseLambdaBody(params, nonLexical, async, pure, trapped);
     }
 
-    private Ast.LambdaExpr parsePipeLambda(boolean nonLexical) {
+    private Ast.LambdaExpr parsePipeLambda(boolean nonLexical, boolean async, boolean pure, boolean trapped) {
         consume(PIPE, "expected '|'");
         List<Ast.Param> params = new ArrayList<>();
         if (!check(PIPE)) {
@@ -2864,18 +2857,36 @@ public final class Parser {
         }
         consume(PIPE, "expected closing '|' after lambda parameters");
         consume(ARROW, "lambdas use the slim arrow '->'");
-        return parseLambdaBody(params, nonLexical);
+        return parseLambdaBody(params, nonLexical, async, pure, trapped);
     }
 
-    private Ast.LambdaExpr parseLambdaBody(List<Ast.Param> params, boolean nonLexical) {
-        // Only an immediate '{' denotes the statement-block form. Everything
-        // else starts a normal expression body. This is intentionally lexical:
-        // future prefix expressions such as `struct{...}{...}` must remain
-        // expression bodies rather than being confused with a lambda block.
-        if (check(LBRACE)) {
-            return new Ast.LambdaExpr(params, null, parseBlock(), nonLexical);
+    private Ast.LambdaExpr parseLambdaBody(
+            List<Ast.Param> params,
+            boolean nonLexical,
+            boolean async,
+            boolean pure,
+            boolean trapped) {
+        // Typed block lambdas use '|args| -> ReturnType { ... }'. Probe the
+        // type grammar and roll back unless it is immediately followed by a
+        // block: '|x| -> x + 1' must remain an expression-bodied lambda.
+        Ast.TypeRef returnType = null;
+        if (!check(LBRACE) && (check(IDENT) || check(VOID) || check(LBRACKET)
+                || check(TYPEOF) || check(LPAREN))) {
+            int checkpoint = current;
+            try {
+                Ast.TypeRef candidate = parseTypeRef();
+                if (check(LBRACE)) returnType = candidate;
+            } catch (IllegalArgumentException ignored) {
+                // The expression grammar owns this sequence unless a complete
+                // type is followed by a block.
+            }
+            if (returnType == null) current = checkpoint;
         }
-        return new Ast.LambdaExpr(params, parseExpression(), null, nonLexical);
+        if (check(LBRACE)) {
+            return new Ast.LambdaExpr(params, null, parseBlock(), nonLexical, returnType, async, pure, trapped);
+        }
+        // Braces are mandatory when declaring a lambda return type.
+        return new Ast.LambdaExpr(params, parseExpression(), null, nonLexical, null, async, pure, trapped);
     }
 
     private boolean looksLikeLambda() {
@@ -3203,5 +3214,5 @@ public final class Parser {
         return new IllegalArgumentException("Oreslang parse error at " + token.line() + ":" + token.column() + ": " + message);
     }
 
-    private record Modifiers(Ast.Visibility visibility, boolean visibilitySeen, boolean async, boolean generator, boolean structural, boolean nonLexical, boolean trapped, boolean isStatic, boolean isAbstract, boolean shared, boolean untrusted) { }
+    private record Modifiers(Ast.Visibility visibility, boolean visibilitySeen, boolean async, boolean generator, boolean structural, boolean nonLexical, boolean pure, boolean trapped, boolean isStatic, boolean isAbstract, boolean shared, boolean untrusted) { }
 }

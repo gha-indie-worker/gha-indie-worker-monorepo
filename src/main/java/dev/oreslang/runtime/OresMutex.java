@@ -207,11 +207,6 @@ public final class OresMutex {
             this.ownerDomain = ActorRuntime.currentExecutionDomain();
         }
 
-        Object retainedValueForRuntime() {
-            requireOwnerDomain();
-            return value;
-        }
-
         private void requireOwnerDomain() {
             if (!Objects.equals(ActorRuntime.currentExecutionDomain(), ownerDomain)) {
                 throw new WrongMutexDomainException(

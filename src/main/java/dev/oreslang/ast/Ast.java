@@ -194,6 +194,7 @@ public final class Ast {
             boolean generator,
             boolean structural,
             boolean nonLexical,
+            boolean pure,
             boolean trapped,
             ActorKind actorKind,
             List<String> genericParameters,
@@ -212,7 +213,7 @@ public final class Ast {
                             boolean generator, boolean nonLexical, ActorKind actorKind,
                             List<String> genericParameters, List<Param> parameters,
                             TypeRef returnType, List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, generator, false, nonLexical, false, actorKind,
+            this(name, kind, visibility, async, generator, false, nonLexical, false, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
@@ -222,7 +223,7 @@ public final class Ast {
                             ActorKind actorKind, List<String> genericParameters,
                             List<Param> parameters, TypeRef returnType,
                             List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, generator, structural, nonLexical, false, actorKind,
+            this(name, kind, visibility, async, generator, structural, nonLexical, false, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
@@ -231,27 +232,27 @@ public final class Ast {
                             boolean nonLexical, ActorKind actorKind, List<String> genericParameters,
                             List<Param> parameters, TypeRef returnType, List<Annotation> annotations,
                             List<Stmt> body) {
-            this(name, kind, visibility, async, false, false, nonLexical, false, actorKind,
+            this(name, kind, visibility, async, false, false, nonLexical, false, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
         public FunctionDecl(String name, CallableKind kind, Visibility visibility, boolean async,
                             ActorKind actorKind, List<String> genericParameters, List<Param> parameters,
                             TypeRef returnType, List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, false, false, false, false, actorKind,
+            this(name, kind, visibility, async, false, false, false, false, false, actorKind,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
         public FunctionDecl(String name, CallableKind kind, Visibility visibility, boolean async,
                             List<String> genericParameters, List<Param> parameters, TypeRef returnType,
                             List<Annotation> annotations, List<Stmt> body) {
-            this(name, kind, visibility, async, false, false, false, false, ActorKind.NONE,
+            this(name, kind, visibility, async, false, false, false, false, false, ActorKind.NONE,
                     genericParameters, parameters, returnType, annotations, body);
         }
 
         public FunctionDecl(String name, Visibility visibility, boolean async, List<String> genericParameters,
                             List<Param> parameters, TypeRef returnType, List<Annotation> annotations, List<Stmt> body) {
-            this(name, CallableKind.FNC, visibility, async, false, false, false, false, ActorKind.NONE,
+            this(name, CallableKind.FNC, visibility, async, false, false, false, false, false, ActorKind.NONE,
                     genericParameters, parameters, returnType, annotations, body);
         }
     }
@@ -727,10 +728,8 @@ public final class Ast {
     public record MemberExpr(Expr receiver, String member) implements Expr { }
     public record IndexExpr(Expr receiver, Expr index) implements Expr { }
 
-    /** Named creation: actorSpawn distinguishes the source spawn operation from new. */
-    public record NewExpr(TypeRef type, List<Expr> arguments, boolean actorSpawn) implements Expr {
+    public record NewExpr(TypeRef type, List<Expr> arguments) implements Expr {
         public NewExpr { arguments = List.copyOf(arguments); }
-        public NewExpr(TypeRef type, List<Expr> arguments) { this(type, arguments, false); }
     }
 
     public record AwaitExpr(Expr expression) implements Expr { }
@@ -823,7 +822,15 @@ public final class Ast {
         public ObjectExpr { fields = List.copyOf(fields); }
     }
 
-    public record LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody, boolean nonLexical) implements Expr {
+    public record LambdaExpr(
+            List<Param> parameters,
+            Expr expressionBody,
+            List<Stmt> blockBody,
+            boolean nonLexical,
+            TypeRef returnType,
+            boolean async,
+            boolean pure,
+            boolean trapped) implements Expr {
         public LambdaExpr {
             parameters = List.copyOf(parameters);
             blockBody = blockBody == null ? null : List.copyOf(blockBody);
@@ -833,7 +840,17 @@ public final class Ast {
             }
         }
         public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody) {
-            this(parameters, expressionBody, blockBody, false);
+            this(parameters, expressionBody, blockBody, false, null, false, false, false);
+        }
+        public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody, boolean nonLexical) {
+            this(parameters, expressionBody, blockBody, nonLexical, null, false, false, false);
+        }
+        public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody, boolean nonLexical, TypeRef returnType) {
+            this(parameters, expressionBody, blockBody, nonLexical, returnType, false, false, false);
+        }
+        public LambdaExpr(List<Param> parameters, Expr expressionBody, List<Stmt> blockBody,
+                          boolean nonLexical, TypeRef returnType, boolean async) {
+            this(parameters, expressionBody, blockBody, nonLexical, returnType, async, false, false);
         }
     }
 }
