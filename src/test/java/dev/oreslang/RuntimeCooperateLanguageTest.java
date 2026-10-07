@@ -47,6 +47,81 @@ final class RuntimeCooperateLanguageTest {
     }
 
     @Test
+    void cooperatePreservesMutableLocalsAndNestedControlFlowWithoutReplay() throws Exception {
+        assertEquals("22", run("""
+                define module app as
+                  fnc stateful(): int {
+                    let x = 10;
+                    x = x + 1;
+                    rt cooperate;
+                    if x == 11; do
+                      x = x + 10;
+                      rt cooperate;
+                    fi
+                    x = x + 1;
+                    return x;
+                  }
+
+                  pub async fnc main(): void {
+                    stdio.println(stateful());
+                    return;
+                  }
+                end
+                """));
+    }
+
+    @Test
+    void cooperatePreservesLoopProgramCounterAndAccumulator() throws Exception {
+        assertEquals("28", run("""
+                define module app as
+                  fnc sum(): int {
+                    let i = 0;
+                    let total = 0;
+                    loop {
+                      if i >= 8; do
+                        break;
+                      fi
+                      total = total + i;
+                      i = i + 1;
+                      rt cooperate;
+                    }
+                    return total;
+                  }
+
+                  pub async fnc main(): void {
+                    stdio.println(sum());
+                    return;
+                  }
+                end
+                """));
+    }
+
+    @Test
+    void cooperateComposesAcrossNestedFunctionCalls() throws Exception {
+        assertEquals("14", run("""
+                define module app as
+                  fnc inner(): int {
+                    let value = 3;
+                    rt cooperate;
+                    value = value + 4;
+                    return value;
+                  }
+
+                  fnc outer(): int {
+                    let value = inner();
+                    rt cooperate;
+                    return value * 2;
+                  }
+
+                  pub async fnc main(): void {
+                    stdio.println(outer());
+                    return;
+                  }
+                end
+                """));
+    }
+
+    @Test
     void parserCanonicalizesBothSpellingsToCooperateAst() {
         for (String spelling : new String[]{"rt cooperate;", "rt yield;"}) {
             Ast.Program program = Parser.parse("""
