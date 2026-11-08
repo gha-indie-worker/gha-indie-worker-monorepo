@@ -56,7 +56,7 @@ jobs:
           path.write_text(src.replace(original, "    if False:", 1))
           PY
           trap 'git checkout -- scripts/verify_gitlinks.py' EXIT
-          if python3 -m unittest discover -s tests -p 'test_verify_gitlinks.py' -v > "${RUNNER_TEMP}/gitlink-mutant.log" 2>&1; then
+          if python3 -m unittest discover -s tests -p 'test_verify_gitlinks.py' -v -k test_rejects_untracked_declaration > "${RUNNER_TEMP}/gitlink-mutant.log" 2>&1; then
             echo "Gitlink-drift mutation unexpectedly passed" >&2
             exit 1
           fi
