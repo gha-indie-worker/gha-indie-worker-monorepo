@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+# Unit tests import a local helper; suppress __pycache__ mutation of the worktree.
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
   lock-provenance:
     runs-on: ubuntu-24.04
