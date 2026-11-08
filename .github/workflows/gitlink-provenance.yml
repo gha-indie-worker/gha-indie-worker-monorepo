@@ -105,14 +105,23 @@ jobs:
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 40); do
-            if curl --silent --fail --max-time 1 http://127.0.0.1:18181/healthz > "${RUNNER_TEMP}/health.json"; then
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18181/readyz > "${RUNNER_TEMP}/ready.json"; then
               break
             fi
             kill -0 "$server_pid"
             sleep 0.1
           done
-          grep -F '"ok":true' "${RUNNER_TEMP}/health.json"
-          curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18181/readyz | grep -F '"ok":true'
+          grep -F '"ok":true' "${RUNNER_TEMP}/ready.json"
+          # The historical pinned web SHA serves /readyz only. Any new pin
+          # must implement the hardened /healthz contract with a JSON 200.
+          pinned_web="$(git -C apps/gha-indie-worker-web-server.rs rev-parse HEAD)"
+          health_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/health.json" --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18181/healthz)"
+          if test "$pinned_web" = "855e7f1c26eeded00533afed4b443b9bafe06ead"; then
+            test "$health_status" = "404"
+          else
+            test "$health_status" = "200"
+            grep -F '"ok":true' "${RUNNER_TEMP}/health.json"
+          fi
           curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18181/ | grep -F 'GHA Indie Worker'
           test "$(curl --silent --output "${RUNNER_TEMP}/missing.txt" --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18181/not-found)" = "404"
           grep -F 'not found' "${RUNNER_TEMP}/missing.txt"
