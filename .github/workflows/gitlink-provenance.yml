@@ -1,0 +1,77 @@
+name: Monorepo gitlink provenance and source admission
+
+on:
+  pull_request:
+    paths:
+      - .gitmodules
+      - .zpkg.toml
+      - .zpkg.lock
+      - apps/**
+      - scripts/verify_gitlinks.py
+      - tests/test_verify_gitlinks.py
+      - .github/workflows/gitlink-provenance.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-gitlinks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable monorepo head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact head and clean source tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+          echo "EXACT_HEAD=$EXPECTED_HEAD"
+          echo "EXACT_TREE=$(git rev-parse HEAD^{tree})"
+      - name: Run all Git index and manifest negative contracts
+        run: python3 -m unittest discover -s tests -p 'test_verify_gitlinks.py' -v
+      - name: Verify current tracked gitlinks and optional lock metadata
+        run: python3 scripts/verify_gitlinks.py
+      - name: Negative mutation must catch missing gitlinks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/verify_gitlinks.py")
+          src = path.read_text()
+          original = "    if declared_paths != indexed_paths:"
+          assert src.count(original) == 1, "expected a single exact gitlink-set comparison"
+          path.write_text(src.replace(original, "    if False:", 1))
+          PY
+          trap 'git checkout -- scripts/verify_gitlinks.py' EXIT
+          if python3 -m unittest discover -s tests -p 'test_verify_gitlinks.py' -v > "${RUNNER_TEMP}/gitlink-mutant.log" 2>&1; then
+            echo "Gitlink-drift mutation unexpectedly passed" >&2
+            exit 1
+          fi
+          grep -F 'FAILED (failures=1)' "${RUNNER_TEMP}/gitlink-mutant.log"
+          grep -F 'test_rejects_untracked_declaration' "${RUNNER_TEMP}/gitlink-mutant.log"
+          git checkout -- scripts/verify_gitlinks.py
+          trap - EXIT
+          test -z "$(git status --porcelain)"
+      - name: Materialize only authorized public pinned submodules
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          git submodule sync
+          git -c protocol.file.allow=never submodule update --init --jobs=2
+          python3 scripts/verify_gitlinks.py --materialized
+          test -z "$(git status --porcelain)"
