@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/gha-pinned-startup-target
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
@@ -28,6 +27,11 @@ jobs:
           persist-credentials: false
           submodules: false
           ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set isolated Cargo build output in the runner scratch directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/gha-pinned-startup-target" >> "${GITHUB_ENV}"
       - name: Verify exact head and tree identity
         shell: bash
         env:
