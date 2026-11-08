@@ -81,3 +81,43 @@ jobs:
           git -c protocol.file.allow=never submodule update --init --jobs=2
           python3 scripts/verify_gitlinks.py --materialized
           test -z "$(git status --porcelain)"
+      - name: Install pinned Rust toolchain for public service submodules
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: '1.90.0'
+          components: rustfmt, clippy
+      - name: Build and test the exact pinned API and web revisions
+        shell: bash
+        env:
+          CARGO_INCREMENTAL: '0'
+        run: |
+          set -euo pipefail
+          cargo test --locked --all-targets --manifest-path apps/gha-indie-worker-api-server.rs/Cargo.toml
+          cargo test --locked --all-targets --manifest-path apps/gha-indie-worker-web-server.rs/Cargo.toml
+          cargo build --locked --manifest-path apps/gha-indie-worker-web-server.rs/Cargo.toml
+      - name: Exercise pinned web server readiness and route contracts
+        shell: bash
+        env:
+          GHA_INDIE_WORKER_WEB_BIND: '127.0.0.1:18181'
+        run: |
+          set -euo pipefail
+          apps/gha-indie-worker-web-server.rs/target/debug/gha-indie-worker-web-server &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 40); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18181/healthz > "${RUNNER_TEMP}/health.json"; then
+              break
+            fi
+            kill -0 "$server_pid"
+            sleep 0.1
+          done
+          grep -F '"ok":true' "${RUNNER_TEMP}/health.json"
+          curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18181/readyz | grep -F '"ok":true'
+          curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18181/ | grep -F 'GHA Indie Worker'
+          test "$(curl --silent --output "${RUNNER_TEMP}/missing.txt" --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18181/not-found)" = "404"
+          grep -F 'not found' "${RUNNER_TEMP}/missing.txt"
+          kill "$server_pid" 2>/dev/null || true
+          wait "$server_pid" 2>/dev/null || true
+          trap - EXIT
+          python3 scripts/verify_gitlinks.py --materialized
+          test -z "$(git status --porcelain)"
