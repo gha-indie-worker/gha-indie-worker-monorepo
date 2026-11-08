@@ -38,6 +38,11 @@ jobs:
           test -z "$(git status --porcelain)"
           echo "EXACT_HEAD=$EXPECTED_HEAD"
           echo "EXACT_TREE=$(git rev-parse 'HEAD^{tree}')"
+      - name: Compile source-owned startup smoke without side effects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -c 'from pathlib import Path; f=Path("scripts/smoke_pinned_services.py"); compile(f.read_text(), str(f), "exec")'
       - name: Materialize two exact public service Gitlinks
         run: bash scripts/materialize_pinned_public_services.sh
       - name: Install Rust 1.90.0
