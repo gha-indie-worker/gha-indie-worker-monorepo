@@ -10,9 +10,13 @@
 *.sqlite
 Cargo.lock
 
-# ores-compose / IndieBuild local runtime material. These directories contain
-# fetched source trees, build outputs, job logs and durable report intents; they
-# are operator runtime state and must never become repository policy.
+# Zed package-manager local state. These are generated during frozen local
+# bootstrap and must never make the pinned source checkout appear dirty.
+/.zed/
+/zed_modules/
+
+# ores-compose / IndieBuild runtime state: fetched source trees, build
+# outputs, job logs and durable report intents remain operator-local.
 /.ores/
 
 # Repository-local temporary data and authorized Git worktrees
