@@ -14,6 +14,9 @@ Cargo.lock
 # bootstrap and must never make the pinned source checkout appear dirty.
 /.zed/
 /zed_modules/
+
+# ores-compose / IndieBuild runtime state: fetched source trees, build
+# outputs, job logs and durable report intents remain operator-local.
 /.ores/
 
 # Repository-local temporary data and authorized Git worktrees

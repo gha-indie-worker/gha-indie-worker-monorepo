@@ -1,0 +1,94 @@
+name: laptop worker provenance contract
+
+on:
+  push:
+    branches:
+      - feat/laptop-ci-worker-source
+  pull_request:
+    paths:
+      - "scripts/bootstrap-ci-worker.sh"
+      - "scripts/run-ci-worker.sh"
+      - "scripts/ci-worker-healthcheck.sh"
+      - "scripts/cloudflared-healthcheck.sh"
+      - "config/ci-worker-webhook-rules.json"
+      - ".github/workflows/laptop-worker-provenance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: laptop-worker-provenance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  INDIEBUILD_WORKER_SHA: be8f6aac3eb6e1d1f76d613e3082ca2114ceb2bf
+  INDIEBUILD_PROVENANCE_COMMIT: 5cfac43c6900898f36f588d044ca34083da1c726
+
+jobs:
+  hosted-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Static shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/bootstrap-ci-worker.sh
+          bash -n scripts/run-ci-worker.sh
+          bash -n scripts/ci-worker-healthcheck.sh
+          bash -n scripts/cloudflared-healthcheck.sh
+
+      - name: Private provenance requires an operator checkout before source effects
+        shell: bash
+        env:
+          # Sentinels model runtime-only values that must not influence source
+          # admission. No private repository credential is supplied here.
+          INDIEBUILD_GITHUB_WEBHOOK_SECRET: ci-must-not-reach-bootstrap
+          INDIEBUILD_WORKER_AUTH_SECRET: ci-must-not-reach-bootstrap
+          INDIEBUILD_CLOUDFLARE_TUNNEL_TOKEN: ci-must-not-reach-bootstrap
+        run: |
+          set -euo pipefail
+          rm -rf .ores
+          set +e
+          bash scripts/bootstrap-ci-worker.sh >"$RUNNER_TEMP/bootstrap.out" 2>"$RUNNER_TEMP/bootstrap.err"
+          status=$?
+          set -e
+          test "$status" -eq 2
+          grep -Fq 'INDIEBUILD_LIBS_SOURCE_DIR is required for the private provenance gitlink' "$RUNNER_TEMP/bootstrap.err"
+          test ! -e .ores
+          ! grep -Fq 'ci-must-not-reach-bootstrap' "$RUNNER_TEMP/bootstrap.out" "$RUNNER_TEMP/bootstrap.err"
+
+      - name: Provenance receipt binds private gitlink and binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'libs_sha=%s' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'receipt_value libs_sha' scripts/run-ci-worker.sh
+          grep -Fq 'receipt contains an invalid private provenance gitlink SHA' scripts/run-ci-worker.sh
+          grep -Fq 'worker binary hash does not match its provenance receipt' scripts/run-ci-worker.sh
+
+      - name: Bootstrap never admits ambient Git credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'GIT_CONFIG_NOSYSTEM=1' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'GIT_CONFIG_GLOBAL=/dev/null' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'GIT_TERMINAL_PROMPT=0' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'GIT_ASKPASS=/bin/false' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'protocol.ssh.allow=never' scripts/bootstrap-ci-worker.sh
+          grep -Fq 'materialize_private_gitlink' scripts/bootstrap-ci-worker.sh
+          ! grep -Eq 'GH_TOKEN|GITHUB_TOKEN|github_pat_|ghp_' scripts/bootstrap-ci-worker.sh
+
+      - name: Runtime wrappers do not retain phase secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'unset BUILD_SERVER_GITHUB_WEBHOOK_SECRET' scripts/ci-worker-healthcheck.sh
+          grep -Fq 'unset BUILD_SERVER_AUTH_SECRET' scripts/ci-worker-healthcheck.sh
+          grep -Fq 'unset TUNNEL_TOKEN' scripts/cloudflared-healthcheck.sh
